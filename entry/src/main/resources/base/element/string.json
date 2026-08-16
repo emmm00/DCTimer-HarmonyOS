@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "DCTimer - 魔方计时器"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "DCTimer"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "DCTimer"
+    },
+    {
+      "name": "vibrate_reason",
+      "value": "用于计时开始、停止及观察提醒时的振动反馈"
+    },
+    {
+      "name": "bluetooth_reason",
+      "value": "用于连接智能魔方（蓝牙魔方），自动识别转动并停止计时"
+    }
+  ]
+}
