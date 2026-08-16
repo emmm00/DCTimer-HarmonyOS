@@ -1,14 +1,5 @@
 {
   "src": [
-    "pages/Index",
-    "pages/TimerPage",
-    "pages/SettingsPage",
-    "pages/DetailPage",
-    "pages/SessionPage",
-    "pages/ResultPage",
-    "pages/GraphPage",
-    "pages/GanRobotPage",
-    "pages/TestPage",
-    "pages/WebPage"
+    "pages/Index"
   ]
 }

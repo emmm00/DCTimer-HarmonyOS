@@ -74,11 +74,6 @@ export function guessCubeType(deviceName: string | null): CubeType {
   return CubeType.UNKNOWN;
 }
 
-/** 智能魔方扫描过滤器 */
-export function isSmartCubeName(deviceName: string | null): boolean {
-  return guessCubeType(deviceName) !== CubeType.UNKNOWN;
-}
-
 // --- Giiker 协议解析 ---
 
 /**
@@ -129,14 +124,6 @@ interface GiikerServiceUUIDs {
   CHARACTER_WRITE: string;
 }
 
-interface MoyuServiceUUIDs {
-  SERVICE_UUID: string;
-}
-
-interface QiyiServiceUUIDs {
-  SERVICE_UUID: string;
-}
-
 // --- GAN 协议 UUID ---
 export const GAN_SERVICES: GanServiceUUIDs = {
   SERVICE_UUID_V1: '0000fff0-0000-1000-8000-00805f9b34fb',
@@ -157,14 +144,4 @@ export const GIIKER_SERVICES: GiikerServiceUUIDs = {
   CHARACTER_DATA: '0000aadc-0000-1000-8000-00805f9b34fb',
   CHARACTER_READ: '0000aaab-0000-1000-8000-00805f9b34fb',
   CHARACTER_WRITE: '0000aaac-0000-1000-8000-00805f9b34fb'
-};
-
-// --- 魔域32面 UUID ---
-export const MOYU_SERVICES: MoyuServiceUUIDs = {
-  SERVICE_UUID: '0000ffe0-0000-1000-8000-00805f9b34fb'
-};
-
-// --- 奇艺 UUID ---
-export const QIYI_SERVICES: QiyiServiceUUIDs = {
-  SERVICE_UUID: '0000ff00-0000-1000-8000-00805f9b34fb'
 };
