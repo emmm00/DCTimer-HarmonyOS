@@ -27,6 +27,7 @@ import promptAction from '@ohos.promptAction';
 import { window } from '@kit.ArkUI';
 import { vibrator } from '@kit.SensorServiceKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { fileIo } from '@kit.CoreFileKit';
 
 // ===== 颜色常量（与原版一致）=====
 const COLOR_PRIMARY: string = '#3F51B5';
@@ -805,6 +806,10 @@ struct ManualInputDialog {
         .width('80%')
         .height(42)
         .fontSize(18)
+        .fontColor(themeText(AppConfig.darkMode))
+        .placeholderColor(themeSubText(AppConfig.darkMode))
+        .caretColor(themeText(AppConfig.darkMode))
+        .backgroundColor(themeDivider(AppConfig.darkMode))
         .margin({ bottom: 16 })
         .onChange((value: string): void => {
           this.inputValue = value;
@@ -1098,6 +1103,10 @@ struct Index {
     AppConfig.showScrambleImage = prefs.getSync('showScrambleImage', true) as boolean;
     AppConfig.scrambleFontSize = prefs.getSync('scrambleFontSize', 16) as number;
     AppConfig.darkMode = prefs.getSync('darkMode', false) as boolean;
+    AppConfig.bgImageUri = prefs.getSync('bgImageUri', '') as string;
+    AppConfig.bgOpacity = prefs.getSync('bgOpacity', 80) as number;
+    this.bgImageUri = AppConfig.bgImageUri;
+    this.bgOpacity = AppConfig.bgOpacity;
     AppConfig.timerFont = prefs.getSync('timerFont', 0) as number;
     AppConfig.fontSize = prefs.getSync('fontSize', 72) as number;
     AppConfig.keepScreenOn = prefs.getSync('keepScreenOn', true) as boolean;
@@ -1179,6 +1188,8 @@ struct Index {
     prefs.putSync('showScrambleImage', AppConfig.showScrambleImage);
     prefs.putSync('scrambleFontSize', AppConfig.scrambleFontSize);
     prefs.putSync('darkMode', AppConfig.darkMode);
+    prefs.putSync('bgImageUri', AppConfig.bgImageUri);
+    prefs.putSync('bgOpacity', AppConfig.bgOpacity);
     prefs.putSync('timerFont', AppConfig.timerFont);
     prefs.putSync('fontSize', AppConfig.fontSize);
     prefs.putSync('keepScreenOn', AppConfig.keepScreenOn);
@@ -1499,6 +1510,22 @@ struct Index {
   }
 
   // ===== 背景图片选择 =====
+  /** 把选中的图片复制到应用沙箱，返回沙箱路径（相册 URI 授权在退出应用后失效） */
+  copyBgImageToSandbox(uri: string): string {
+    try {
+      const srcFile: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      const destPath: string = getContext(this).filesDir + '/bg_image';
+      const dstFile: fileIo.File = fileIo.openSync(destPath,
+        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+      fileIo.copyFileSync(srcFile.fd, dstFile.fd);
+      fileIo.closeSync(srcFile);
+      fileIo.closeSync(dstFile);
+      return 'file://' + destPath;
+    } catch (err) {
+      return '';
+    }
+  }
+
   async pickBackgroundImage(): Promise<void> {
     try {
       const photoPicker: photoAccessHelper.PhotoViewPicker =
@@ -1508,10 +1535,14 @@ struct Index {
         maxSelectNumber: 1
       });
       if (result && result.photoUris && result.photoUris.length > 0) {
-        const uri: string = result.photoUris[0];
-        this.bgImageUri = uri;
-        BackgroundManager.setImageUri(uri);
-        AppConfig.bgImageUri = uri;
+        const localPath: string = this.copyBgImageToSandbox(result.photoUris[0]);
+        if (localPath.length === 0) {
+          promptAction.showToast({ message: '背景图片读取失败', duration: 2000 });
+          return;
+        }
+        this.bgImageUri = localPath;
+        BackgroundManager.setImageUri(localPath);
+        AppConfig.bgImageUri = localPath;
         this.initSettings();
         this.saveToPreferences();
       }
@@ -1524,6 +1555,11 @@ struct Index {
     this.bgImageUri = '';
     BackgroundManager.clearImage();
     AppConfig.bgImageUri = '';
+    try {
+      fileIo.unlinkSync(getContext(this).filesDir + '/bg_image');
+    } catch (err) {
+      // 文件不存在时忽略
+    }
     this.saveToPreferences();
   }
 
@@ -2705,12 +2741,12 @@ struct Index {
       // 底部均值栏
       Text(this.sessionMeanText)
         .width('100%')
-        .height(38)
+        .constraintSize({ minHeight: 38 })
         .fontSize(15)
         .fontColor(themeText(this.isDark))
         .textAlign(TextAlign.Center)
-        .maxLines(1)
-        .padding({ left: 10, right: 10 });
+        .maxLines(2)
+        .padding({ left: 10, right: 10, top: 8, bottom: 8 });
       }
     }
     .width('100%')
@@ -2901,8 +2937,11 @@ struct NoteEditDialog {
         .width('100%')
         .height(48)
         .fontSize(15)
+        .fontColor(themeText(AppConfig.darkMode))
+        .placeholderColor(themeSubText(AppConfig.darkMode))
+        .caretColor(themeText(AppConfig.darkMode))
         .padding({ left: 12, right: 12 })
-        .backgroundColor(themeBg(AppConfig.darkMode))
+        .backgroundColor(themeDivider(AppConfig.darkMode))
         .borderRadius(8)
         .onChange((value: string): void => {
           this.noteText = value;
