@@ -1096,6 +1096,17 @@ struct Index {
       }
     });
 
+    // 同步读取背景配置，避免冷启动首帧先显示无背景的界面、稍后才加载背景图
+    try {
+      const sprefs: dataPreferences.Preferences =
+        dataPreferences.getPreferencesSync(getContext(this), { name: 'dctimer_data' });
+      const uri: string = sprefs.getSync('bgImageUri', '') as string;
+      const op: number = sprefs.getSync('bgOpacity', 80) as number;
+      BackgroundManager.setImageUri(uri);
+      BackgroundManager.setOpacity(op);
+    } catch (e) {
+      // 首次启动无配置文件时忽略，使用默认值
+    }
     // 初始化背景设置
     this.bgImageUri = BackgroundManager.getImageUri();
     this.bgOpacity = BackgroundManager.getOpacity();
