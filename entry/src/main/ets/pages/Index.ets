@@ -28,6 +28,10 @@ import { window } from '@kit.ArkUI';
 import { vibrator } from '@kit.SensorServiceKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
+import webview from '@ohos.web.webview';
+
+// 隐私政策地址
+const PRIVACY_URL: string = 'https://719ef27c332c4519bb9ed911f26afb5b.app.workbuddy.link/';
 
 // ===== 颜色常量（与原版一致）=====
 const COLOR_PRIMARY: string = '#3F51B5';
@@ -971,6 +975,27 @@ struct Index {
     customStyle: true
   });
   private bleDialog: CustomDialogController | null = null;
+  // 隐私政策对话框：首次启动需同意；设置页可查看
+  private privacyDialog: CustomDialogController = new CustomDialogController({
+    builder: PrivacyDialog({
+      mode: 0,
+      onAgree: (): void => { this.onPrivacyAgree(); },
+      onExit: (): void => { this.exitApp(); }
+    }),
+    autoCancel: false,
+    alignment: DialogAlignment.Center,
+    customStyle: true
+  });
+  private privacyViewDialog: CustomDialogController = new CustomDialogController({
+    builder: PrivacyDialog({
+      mode: 1,
+      onAgree: (): void => {},
+      onExit: (): void => {}
+    }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: true
+  });
 
   aboutToAppear(): void {
     initAlgorithmCache(getContext(this) as common.UIAbilityContext);
@@ -1034,7 +1059,37 @@ struct Index {
         this.generateScramble();
       }
       this.initDatabase();
+      this.checkPrivacyAgreement();
     });
+  }
+
+  // ===== 隐私政策 =====
+  /** 首次启动且未同意隐私政策时，弹出必须同意的对话框 */
+  checkPrivacyAgreement(): void {
+    if (!AppConfig.privacyAgreed) {
+      this.privacyDialog.open();
+    }
+  }
+
+  /** 首次同意回调：标记已同意并持久化 */
+  onPrivacyAgree(): void {
+    AppConfig.privacyAgreed = true;
+    this.saveToPreferences();
+  }
+
+  /** 不同意时退出应用 */
+  exitApp(): void {
+    try {
+      const abilityCtx = getContext(this) as common.UIAbilityContext;
+      abilityCtx.terminateSelf();
+    } catch (e) {
+      // 退出失败时静默（模拟器/异常场景）
+    }
+  }
+
+  /** 设置页查看隐私政策 */
+  openPrivacyPolicy(): void {
+    this.privacyViewDialog.open();
   }
 
   /** 初始化数据库并加载当前训练组成绩 */
@@ -1105,6 +1160,7 @@ struct Index {
     AppConfig.darkMode = prefs.getSync('darkMode', false) as boolean;
     AppConfig.bgImageUri = prefs.getSync('bgImageUri', '') as string;
     AppConfig.bgOpacity = prefs.getSync('bgOpacity', 80) as number;
+    AppConfig.privacyAgreed = prefs.getSync('privacyAgreed', false) as boolean;
     this.bgImageUri = AppConfig.bgImageUri;
     this.bgOpacity = AppConfig.bgOpacity;
     AppConfig.timerFont = prefs.getSync('timerFont', 0) as number;
@@ -1190,6 +1246,7 @@ struct Index {
     prefs.putSync('darkMode', AppConfig.darkMode);
     prefs.putSync('bgImageUri', AppConfig.bgImageUri);
     prefs.putSync('bgOpacity', AppConfig.bgOpacity);
+    prefs.putSync('privacyAgreed', AppConfig.privacyAgreed);
     prefs.putSync('timerFont', AppConfig.timerFont);
     prefs.putSync('fontSize', AppConfig.fontSize);
     prefs.putSync('keepScreenOn', AppConfig.keepScreenOn);
@@ -2062,6 +2119,11 @@ struct Index {
         title: '求解器', items: [
           { id: 71, title: '默认十字底面', detail: this.getCrossBottomDesc(), type: 0, value: false }
         ]
+      },
+      {
+        title: '关于', items: [
+          { id: 50, title: '隐私政策', detail: '', type: 0, value: false }
+        ]
       }
     ];
   }
@@ -2203,6 +2265,9 @@ struct Index {
       case 71:
         AppConfig.defaultCrossBottom = (AppConfig.defaultCrossBottom + 1) % 6;
         break;
+      case 50:
+        this.openPrivacyPolicy();
+        return; // 隐私政策对话框自己管理
       default:
         return;
     }
@@ -2972,6 +3037,95 @@ struct NoteEditDialog {
       .margin({ top: 16 });
     }
     .width('90%')
+    .backgroundColor(themeBg(AppConfig.darkMode))
+    .borderRadius(16)
+    .padding(16);
+  }
+}
+
+// ===== 隐私政策对话框 =====
+@CustomDialog
+struct PrivacyDialog {
+  controller: CustomDialogController;
+  // 0=首次同意模式, 1=仅查看模式
+  mode: number = 0;
+  onAgree: () => void = (): void => {};
+  onExit: () => void = (): void => {};
+  @State agreed: boolean = false;
+  private webCtrl: webview.WebviewController = new webview.WebviewController();
+
+  build() {
+    Column() {
+      Text('隐私政策')
+        .fontSize(17)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(themeText(AppConfig.darkMode))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .padding({ top: 16, bottom: 10 });
+
+      // 政策内容
+      Column() {
+        Web({ src: PRIVACY_URL, controller: this.webCtrl })
+          .width('100%')
+          .height('100%');
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .clip(true);
+
+      if (this.mode === 0) {
+        // 首次同意模式
+        Row() {
+          Checkbox({ name: 'privacyAgree', group: 'privacy' })
+            .select(this.agreed)
+            .selectedColor(COLOR_ACCENT)
+            .onChange((checked: boolean): void => { this.agreed = checked; });
+          Text('我已阅读并同意《隐私政策》')
+            .fontSize(14)
+            .fontColor(themeText(AppConfig.darkMode))
+            .onClick((): void => { this.agreed = !this.agreed; });
+        }
+        .width('100%')
+        .margin({ top: 12 });
+
+        Row() {
+          Button('不同意并退出')
+            .fontSize(15)
+            .fontColor(themeText(AppConfig.darkMode))
+            .backgroundColor(themeDivider(AppConfig.darkMode))
+            .layoutWeight(1)
+            .height(44)
+            .onClick((): void => { this.onExit(); });
+          Button('同意并继续')
+            .fontSize(15)
+            .fontColor('#ffffff')
+            .backgroundColor(this.agreed ? COLOR_ACCENT : themeDivider(AppConfig.darkMode))
+            .enabled(this.agreed)
+            .layoutWeight(1)
+            .height(44)
+            .margin({ left: 12 })
+            .onClick((): void => {
+              this.onAgree();
+              this.controller.close();
+            });
+        }
+        .width('100%')
+        .margin({ top: 14 });
+      } else {
+        // 仅查看模式
+        Button('关 闭')
+          .fontSize(15)
+          .fontColor('#ffffff')
+          .backgroundColor(COLOR_ACCENT)
+          .width('100%')
+          .height(44)
+          .margin({ top: 14 })
+          .onClick((): void => { this.controller.close(); });
+      }
+    }
+    .width('92%')
+    .height('82%')
     .backgroundColor(themeBg(AppConfig.darkMode))
     .borderRadius(16)
     .padding(16);

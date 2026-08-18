@@ -42,6 +42,9 @@ export class AppConfig {
   static bgImageUri: string = '';
   static bgOpacity: number = 80; // 0-100, 0=完全透明, 100=完全不透明
 
+  // 隐私政策
+  static privacyAgreed: boolean = false;
+
   // 智能计算器/求解器设置
   static solverType: number = 1; // 0=无, 1=cross, 2=xcross, 3=eoline, 4=roux, 5=petrus, 6=eofc
   static solverCrossSide: number[] = [0]; // 十字底面选择(位掩码)
