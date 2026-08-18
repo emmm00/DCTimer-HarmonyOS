@@ -33,6 +33,58 @@ import webview from '@ohos.web.webview';
 // 隐私政策地址
 const PRIVACY_URL: string = 'https://719ef27c332c4519bb9ed911f26afb5b.app.workbuddy.link/';
 
+interface PrivacySection {
+  title: string;
+  body: string;
+}
+
+// 隐私政策文字（与网页版一致）
+const PRIVACY_SECTIONS: PrivacySection[] = [
+  { title: '更新日期', body: '2026年8月17日' },
+  { title: '', body: '本应用是一款魔方计时与训练工具。我们深知个人信息对您的重要性，并会尽全力保护您的个人信息安全可靠。' },
+  { title: '一、我们收集的信息', body: '本应用不收集、不存储、不上传任何您的个人信息。您在使用本应用过程中产生的所有数据（包括但不限于计时成绩、训练分组、设置偏好等）均仅保存在您的设备本地，不会被传输至任何服务器。' },
+  { title: '二、我们如何使用信息', body: '由于本应用不收集任何个人信息，因此不存在对您个人信息的使用、共享、转让或公开披露。' },
+  { title: '三、权限说明', body: '本应用不申请任何涉及个人信息的敏感权限（如位置、通讯录、相机、麦克风、存储等）。所有功能均在本地完成，无需联网。' },
+  { title: '四、数据安全', body: '您的所有数据仅存储在本地设备中，卸载本应用后数据将随之删除，请定期备份重要数据。' },
+  { title: '五、未成年人保护', body: '本应用不收集任何个人信息，因此不存在未成年人个人信息处理的情形。' },
+  { title: '六、联系我们', body: '如您对本隐私政策有任何疑问、意见或建议，可发送邮件至：2297005473@qq.com。' },
+  { title: '七、政策更新', body: '本隐私政策可能会适时更新。更新后将在应用内公布，更新后的政策自公布之日起生效。' }
+];
+
+// ===== 网页版隐私政策对话框（仅查看，由文字版底部超链接打开）=====
+@CustomDialog
+struct PrivacyWebDialog {
+  controller: CustomDialogController;
+  private webCtrl: webview.WebviewController = new webview.WebviewController();
+
+  build() {
+    Column() {
+      Row() {
+        Text('网页版隐私政策')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(themeText(AppConfig.darkMode))
+          .layoutWeight(1);
+        Button('关闭')
+          .fontSize(14)
+          .fontColor(COLOR_ACCENT)
+          .backgroundColor(Color.Transparent)
+          .onClick((): void => { this.controller.close(); });
+      }
+      .width('100%')
+      .padding({ left: 8, right: 8, bottom: 8 });
+
+      Web({ src: PRIVACY_URL, controller: this.webCtrl })
+        .width('100%')
+        .layoutWeight(1);
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(themeBg(AppConfig.darkMode))
+    .padding(12);
+  }
+}
+
 // ===== 颜色常量（与原版一致）=====
 const COLOR_PRIMARY: string = '#3F51B5';
 const COLOR_PRIMARY_DARK: string = '#2c2c2c';
@@ -980,7 +1032,8 @@ struct Index {
     builder: PrivacyDialog({
       mode: 0,
       onAgree: (): void => { this.onPrivacyAgree(); },
-      onExit: (): void => { this.exitApp(); }
+      onExit: (): void => { this.exitApp(); },
+      onViewWeb: (): void => { this.openPrivacyWeb(); }
     }),
     autoCancel: false,
     alignment: DialogAlignment.Center,
@@ -990,8 +1043,15 @@ struct Index {
     builder: PrivacyDialog({
       mode: 1,
       onAgree: (): void => {},
-      onExit: (): void => {}
+      onExit: (): void => {},
+      onViewWeb: (): void => { this.openPrivacyWeb(); }
     }),
+    autoCancel: true,
+    alignment: DialogAlignment.Center,
+    customStyle: true
+  });
+  private privacyWebDialog: CustomDialogController = new CustomDialogController({
+    builder: PrivacyWebDialog({}),
     autoCancel: true,
     alignment: DialogAlignment.Center,
     customStyle: true
@@ -1090,6 +1150,11 @@ struct Index {
   /** 设置页查看隐私政策 */
   openPrivacyPolicy(): void {
     this.privacyViewDialog.open();
+  }
+
+  /** 打开网页版隐私政策 */
+  openPrivacyWeb(): void {
+    this.privacyWebDialog.open();
   }
 
   /** 初始化数据库并加载当前训练组成绩 */
@@ -3051,8 +3116,8 @@ struct PrivacyDialog {
   mode: number = 0;
   onAgree: () => void = (): void => {};
   onExit: () => void = (): void => {};
+  onViewWeb: () => void = (): void => {};
   @State agreed: boolean = false;
-  private webCtrl: webview.WebviewController = new webview.WebviewController();
 
   build() {
     Column() {
@@ -3064,15 +3129,45 @@ struct PrivacyDialog {
         .textAlign(TextAlign.Center)
         .padding({ top: 16, bottom: 10 });
 
-      // 政策内容
-      Column() {
-        Web({ src: PRIVACY_URL, controller: this.webCtrl })
-          .width('100%')
-          .height('100%');
+      // 政策文字内容
+      Scroll() {
+        Column() {
+          ForEach(PRIVACY_SECTIONS, (section: PrivacySection) => {
+            Column() {
+              if (section.title.length > 0) {
+                Text(section.title)
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(themeText(AppConfig.darkMode))
+                  .width('100%')
+                  .margin({ bottom: 4 });
+              }
+              Text(section.body)
+                .fontSize(14)
+                .fontColor(themeText(AppConfig.darkMode))
+                .width('100%')
+                .lineHeight(22);
+            }
+            .width('100%')
+            .margin({ bottom: section.title.length > 0 ? 12 : 8 });
+          }, (section: PrivacySection): string => section.title + '_' + section.body.length)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start);
       }
       .width('100%')
       .layoutWeight(1)
-      .clip(true);
+      .scrollBar(BarState.Off);
+
+      // 网页版超链接
+      Text('查看网页版隐私政策 ›')
+        .fontSize(14)
+        .fontColor(COLOR_ACCENT)
+        .decoration({ type: TextDecorationType.Underline, color: COLOR_ACCENT })
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .margin({ top: 10, bottom: 4 })
+        .onClick((): void => { this.onViewWeb(); });
 
       if (this.mode === 0) {
         // 首次同意模式
@@ -3087,7 +3182,7 @@ struct PrivacyDialog {
             .onClick((): void => { this.agreed = !this.agreed; });
         }
         .width('100%')
-        .margin({ top: 12 });
+        .margin({ top: 6 });
 
         Row() {
           Button('不同意并退出')
@@ -3111,7 +3206,7 @@ struct PrivacyDialog {
             });
         }
         .width('100%')
-        .margin({ top: 14 });
+        .margin({ top: 12 });
       } else {
         // 仅查看模式
         Button('关 闭')
@@ -3120,11 +3215,11 @@ struct PrivacyDialog {
           .backgroundColor(COLOR_ACCENT)
           .width('100%')
           .height(44)
-          .margin({ top: 14 })
+          .margin({ top: 12 })
           .onClick((): void => { this.controller.close(); });
       }
     }
-    .width('92%')
+    .width('90%')
     .height('82%')
     .backgroundColor(themeBg(AppConfig.darkMode))
     .borderRadius(16)
