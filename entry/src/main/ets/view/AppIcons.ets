@@ -56,8 +56,6 @@ export struct AppIcon {
       this.buildList(ctx);
     } else if (this.iconId === 'gear') {
       this.buildGear(ctx);
-    } else if (this.iconId === 'train') {
-      this.buildTrain(ctx);
     }
     ctx.stroke();
     ctx.restore();
@@ -105,15 +103,6 @@ export struct AppIcon {
       ctx.moveTo(32 + c * 21, 32 + sn * 21);
       ctx.lineTo(32 + c * 28, 32 + sn * 28);
     }
-  }
-
-  // 训练（训练页）：靶心 —— 外环 + 中心点
-  // 注意：不要用多个同心细环。图标在 24vp 下渲染时线宽只有约 2px，
-  // 半径 18/14/10/6 的四个环间距仅 1.5px，会糊成一个实心黑点（已踩过）。
-  private buildTrain(ctx: CanvasRenderingContext2D): void {
-    ctx.arc(32, 32, 19, 0, Math.PI * 2);
-    ctx.moveTo(35.5, 32);
-    ctx.arc(32, 32, 3.5, 0, Math.PI * 2);
   }
 
   // 三阶魔方：俯视菱形 + 前/右两面，均含 3x3 分格线

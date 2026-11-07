@@ -21,7 +21,6 @@ import { LcdText } from '../view/LcdText';
 import { StatsChartView } from '../view/StatsChartView';
 import { ExportUtil } from '../util/ExportUtil';
 import { MethodSolverView } from '../view/MethodSolverView';
-import { TrainingView } from '../view/TrainingView';
 import { hasSolver } from '../util/SolverRouting';
 import { AppIcon } from '../view/AppIcons';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -163,8 +162,10 @@ const PUZZLE_CATEGORIES: PuzzleCategory[] = [
     items: [
       { name: 'old style', code: 932 },
       { name: 'random state', code: 933 },
-      { name: 'cross solved', code: 934 },
-      { name: 'last layer', code: 935 },
+      // 934/935 底层就是 F2L / OLL 的打乱（见 Scrambler.generateScramble 的 case 34 / case 35），
+      // 原名 cross solved / last layer 是 DCTimer 老叫法，这里改成玩家熟悉的名字，和下面的 PLL 连成一组。
+      { name: 'F2L', code: 934 },
+      { name: 'OLL', code: 935 },
       { name: 'PLL', code: 936 },
       { name: 'edges only', code: 937 },
       { name: 'corners only', code: 938 },
@@ -2701,9 +2702,8 @@ struct Index {
         if (this.timerState !== TimerState.RUNNING) {
           Row() {
             TabButton({ iconId: 'stopwatch', selected: this.currentTab === 0, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 0; } })
-            TabButton({ iconId: 'train', selected: this.currentTab === 1, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 1; } })
-            TabButton({ iconId: 'list', selected: this.currentTab === 2, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 2; } })
-            TabButton({ iconId: 'gear', selected: this.currentTab === 3, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 3; } })
+            TabButton({ iconId: 'list', selected: this.currentTab === 1, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 1; } })
+            TabButton({ iconId: 'gear', selected: this.currentTab === 2, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 2; } })
           }
           .width('100%')
           .height(48)
@@ -2714,8 +2714,6 @@ struct Index {
         if (this.currentTab === 0) {
           this.TimerTab()
         } else if (this.currentTab === 1) {
-          TrainingView({ isDark: this.isDark })
-        } else if (this.currentTab === 2) {
           this.ResultTab()
         } else {
           this.SettingsTab()
