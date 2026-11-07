@@ -11,6 +11,15 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    // 开启沉浸光感（HarmonyOS 7 系统材质 systemMaterial）。
+    // 只有 entry 类型 module 配这个 metadata 才生效；低版本系统会忽略未知 metadata，
+    // 因此不影响 compatibleSdkVersion 5.0.0 的老设备。
+    "metadata": [
+      {
+        "name": "ohos.arkui.UIMaterial.state",
+        "value": "enable"
+      }
+    ],
     "requestPermissions": [
       {
         "name": "ohos.permission.VIBRATE",

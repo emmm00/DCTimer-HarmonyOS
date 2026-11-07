@@ -99,22 +99,95 @@ export struct MethodSolverView {
     return tab[b];
   }
 
+  /**
+   * 给一个 Promise 套超时：超过 ms 毫秒返回 null，原 Promise 继续在后台跑
+   * （ArkTS 没有取消机制，只能放弃等待）。用于"锦上添花"的第二段求解，
+   * 不能让 24 顺序枚举无限期占着 taskpool。
+   */
+  static async withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+    return new Promise<T | null>((resolve: (v: T | null) => void): void => {
+      let done: boolean = false;
+      const timer: number = setTimeout((): void => {
+        if (!done) {
+          done = true;
+          resolve(null);
+        }
+      }, ms);
+      p.then((v: T): void => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        }
+      }).catch((): void => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  /**
+   * CFOP 求解，分两段跑：
+   * 1) 先用默认插入顺序 [0,1,2,3] 解一条 —— 这一趟只做 4 次逐槽搜索，
+   *    困难打乱也在一两秒内出结果，用户点「求解」马上能看到公式。
+   * 2) 再在后台比较 24 种插入顺序（前缀树去重后 64 次搜索），找出更短的
+   *    挑选出来更新候选列表。这一段失败/超时都不影响已经展示的解法。
+   * 之前是一次性等枚举完才出结果，所以「求解」要卡十几秒甚至更久。
+   */
   async runCfop(forcedOrder?: number[]): Promise<void> {
-    this.cfopMsg = '计算中…（正在比较多种 F2L 插入顺序，稍候）';
     try {
       const front: number = MethodSolverView.adjFace(this.cfopBottom, this.cfopFront);
       this.cfopFront = front;
-      const out: SolveOutput = await solveCFOP(this.scramble,
-        CROSS_FACE_VALUES[this.cfopBottom], CROSS_FACE_VALUES[front], forcedOrder);
-      this.cfopResult = out;
-      if (out.f2lAlternatives != null && out.f2lAlternatives.length > 0) {
-        this.cfopCands = out.f2lAlternatives;
-        this.cfopSel = 0;
+
+      // 指定了某个顺序（用户点候选切换）→ 那条就是它自己的最优，直接重解显示
+      if (forcedOrder != null) {
+        this.cfopMsg = '计算中…';
+        const picked: SolveOutput = await solveCFOP(this.scramble,
+          CROSS_FACE_VALUES[this.cfopBottom], CROSS_FACE_VALUES[front], forcedOrder);
+        this.cfopResult = picked;
+        this.cfopMsg = picked.ok ? '已求出解法' : picked.error;
+        return;
       }
-      if (out.ok) {
-        this.cfopMsg = '已求出解法';
+
+      // 第一段：默认顺序，快速出结果
+      this.cfopMsg = '计算中…（正在求解）';
+      this.cfopCands = [];
+      this.cfopSel = 0;
+      const quick: SolveOutput = await solveCFOP(this.scramble,
+        CROSS_FACE_VALUES[this.cfopBottom], CROSS_FACE_VALUES[front], [0, 1, 2, 3]);
+      this.cfopResult = quick;
+      if (!quick.ok) {
+        this.cfopMsg = quick.error;
+        return;
+      }
+      this.cfopMsg = '已求出解法';
+
+      // 第二段：后台比较 24 种插入顺序，补充候选列表。
+      // 这一段只是"锦上添花"，最长等 20 秒；超时就放弃，已经展示的解法不受影响。
+      // 为什么要超时：24 顺序枚举在困难打乱上可能跑几十秒，占着 taskpool 不划算，
+      // 用户此刻早就在用第一条解法了。
+      this.cfopMsg = '已求出 ' + quick.totalSteps + ' 步解法（后台比较其他 F2L 顺序…）';
+      const full: SolveOutput | null = await MethodSolverView.withTimeout(
+        solveCFOP(this.scramble, CROSS_FACE_VALUES[this.cfopBottom], CROSS_FACE_VALUES[front]),
+        20000);
+      if (full != null && full.ok && full.f2lAlternatives != null &&
+        full.f2lAlternatives.length > 1) {
+        this.cfopCands = full.f2lAlternatives;
+        this.cfopSel = 0;
+        // 按**总步数**比较，不能只看 F2L——曾出现过 F2L 少了 1 步、
+        // 但 OLL 从 7 步涨到 10 步，总步数 51 → 54 反而更差的情况。
+        // 而且不自动替换：先给用户看到的那条不悄悄换掉，由他在候选里自己挑。
+        if (full.totalSteps < quick.totalSteps) {
+          this.cfopMsg = '已求出 ' + quick.totalSteps + ' 步解法，下方有更短的 '
+            + full.totalSteps + ' 步可选';
+        } else {
+          this.cfopMsg = '已求出解法（' + quick.totalSteps + ' 步，已是最优 F2L 顺序）';
+        }
       } else {
-        this.cfopMsg = out.error;
+        this.cfopMsg = '已求出解法（' + quick.totalSteps + ' 步）';
       }
     } catch (e) {
       this.cfopMsg = 'CFOP 求解失败，请重试';

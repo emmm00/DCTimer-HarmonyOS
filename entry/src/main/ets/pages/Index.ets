@@ -36,6 +36,11 @@ import { window } from '@kit.ArkUI';
 import { vibrator } from '@kit.SensorServiceKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { uiMaterial } from '@kit.ArkUI';
+import {
+  GradientStops, GRADIENT_SCHEMES, findScheme, schemeColors, materialSupported, materialEnabled,
+  barMaterial, pageSurface, blockSurface, dialogSurface, dialogBlurRadius
+} from '../util/AmbientTheme';
 
 interface PrivacySection {
   title: string;
@@ -87,23 +92,36 @@ function formatDateFull(ts: number): string {
     d.getSeconds().toString().padStart(2, '0');
 }
 
-/** 内容区背景：有自定义背景时按 bgOpacity 联动半透明，否则纯色。
- *  透明度滑块调大 → 背景图更清晰 → 遮罩 alpha 更小，真正透出图片。 */
-function contentBg(dark: boolean, hasBgImage: boolean): string {
-  if (!hasBgImage) {
-    return themeBg(dark);
+/**
+ * 内容区背景。
+ * 优先级：沉浸光感 > 自定义背景图 > 纯色。
+ * 光感开启时直接全透明，让 build() 里铺的内置渐变透上来；此时即使设了背景图
+ * 也不参与（两张底图叠一起只会互相污染，而且光感的观感本身就是渐变打底）。
+ * 关闭光感时保持原有逻辑：有背景图按 bgOpacity 联动半透明，否则纯色。
+ * ambient 缺省 false，老调用点行为不变。
+ */
+function contentBg(dark: boolean, hasBgImage: boolean, ambient: boolean = false): string {
+  if (ambient) {
+    return pageSurface(dark, true);
   }
-  const a: number = Math.max(0.12, (100 - AppConfig.bgOpacity) / 100);
-  return dark ? 'rgba(30,30,30,' + a + ')' : 'rgba(255,255,255,' + a + ')';
+  if (hasBgImage) {
+    const a: number = Math.max(0.12, (100 - AppConfig.bgOpacity) / 100);
+    return dark ? 'rgba(30,30,30,' + a + ')' : 'rgba(255,255,255,' + a + ')';
+  }
+  return pageSurface(dark, false);
 }
 
 /** 按钮/行背景：有自定义背景时按 bgOpacity 联动半透明 */
-function itemBg(dark: boolean, hasBgImage: boolean): string {
-  if (!hasBgImage) {
-    return themeBg(dark);
+function itemBg(dark: boolean, hasBgImage: boolean, ambient: boolean = false): string {
+  if (hasBgImage) {
+    const a: number = Math.max(0.12, (100 - AppConfig.bgOpacity) / 100);
+    return dark ? 'rgba(38,38,38,' + a + ')' : 'rgba(245,245,245,' + a + ')';
   }
-  const a: number = Math.max(0.12, (100 - AppConfig.bgOpacity) / 100);
-  return dark ? 'rgba(38,38,38,' + a + ')' : 'rgba(245,245,245,' + a + ')';
+  // 光感开启时用次级块表面，比内容底色再透一档，形成层次；关闭时保持原纯色
+  if (ambient) {
+    return blockSurface(dark, true);
+  }
+  return themeBg(dark);
 }
 
 // ===== 魔方类型（带分类）=====
@@ -640,7 +658,8 @@ struct SessionSelectDialog {
     .width('100%')
     // 底部垫高安全区，避免「取消」按钮被手势条遮挡（审核问题2）
     .padding({ bottom: this.bottomInset })
-    .backgroundColor(themeBg(AppConfig.darkMode))
+    .backdropBlur(dialogBlurRadius(materialEnabled(AppConfig.ambientEnabled)))
+    .backgroundColor(dialogSurface(AppConfig.darkMode, materialEnabled(AppConfig.ambientEnabled)))
     .borderRadius({ topLeft: 12, topRight: 12 });
   }
 }
@@ -659,92 +678,89 @@ struct ResultConfirmDialog {
   build() {
     Column() {
       Text('确认成绩')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(themeText(AppConfig.darkMode))
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(themeSubText(AppConfig.darkMode))
         .width('100%')
         .textAlign(TextAlign.Center)
-        .padding({ top: 20, bottom: 12 });
+        .padding({ top: 22 });
 
       Text(this.formatDisplayTime())
-        .fontSize(36)
+        .fontSize(44)
         .fontWeight(FontWeight.Bold)
         .fontColor(themeText(AppConfig.darkMode))
         .width('100%')
         .textAlign(TextAlign.Center)
-        .padding({ bottom: 4 });
+        .padding({ top: 6, bottom: 2 });
 
       Scroll() {
         Column() {
           Text(this.scramble)
-            .fontSize(13)
+            .fontSize(12)
+            .lineHeight(18)
             .fontColor(themeSubText(AppConfig.darkMode))
             .width('100%')
             .textAlign(TextAlign.Center)
-            .maxLines(30)
-            .padding({ left: 16, right: 16 });
+            .maxLines(30);
         }
-        .width('100%');
+        .width('100%')
+        .padding({ left: 24, right: 24 });
       }
       .width('100%')
-      .constraintSize({ maxHeight: 70 })
+      .constraintSize({ maxHeight: 78 })
       .scrollBar(BarState.Off)
-      .padding({ bottom: 12 });
+      .padding({ top: 10, bottom: 18 });
 
-      Row() {
-        Button('确认')
-          .fontSize(16)
-          .fontColor('#ffffff')
-          .backgroundColor(COLOR_ACCENT)
-          .layoutWeight(1)
-          .height(44)
-          .onClick((): void => {
-            this.onConfirm(this.resultPenalty);
-            this.controller.close();
-          });
-
-        Button('+2')
-          .fontSize(16)
-          .fontColor('#ffffff')
-          .backgroundColor('#FF9800')
-          .layoutWeight(1)
-          .height(44)
-          .margin({ left: 8 })
-          .onClick((): void => {
-            this.onConfirm(1);
-            this.controller.close();
-          });
-
-        Button('DNF')
-          .fontSize(16)
-          .fontColor('#ffffff')
-          .backgroundColor('#f44336')
-          .layoutWeight(1)
-          .height(44)
-          .margin({ left: 8 })
-          .onClick((): void => {
-            this.onConfirm(2);
-            this.controller.close();
-          });
+      // 三个处罚选项统一成「淡色底 + 同色描边 + 彩色字」的色调按钮（tonal chip）。
+      // 之前「确认」用的是 #448AFF 实心色，压在毛玻璃上就是一块不透明的蓝贴片，
+      // 和 +2 / DNF 的淡色底也不一致。现在三者同一套视觉语言，主操作靠
+      // 更浓的底色（0.26 vs 0.13）+ 加粗 + 亮一级的文字来区分，不再靠"实心"。
+      Row({ space: 8 }) {
+        this.ActionChip('确认', 'rgba(68,138,255,0.26)', 'rgba(68,138,255,0.55)',
+          COLOR_ACCENT, true, this.resultPenalty);
+        this.ActionChip('+2', 'rgba(255,152,0,0.13)', 'rgba(255,152,0,0.45)',
+          '#F57C00', false, 1);
+        this.ActionChip('DNF', 'rgba(244,67,54,0.13)', 'rgba(244,67,54,0.45)',
+          '#E53935', false, 2);
       }
-      .width('90%')
-      .padding({ bottom: 16 });
+      .width('100%')
+      .padding({ left: 16, right: 16 });
 
+      // 取消只留文字：原来是一整条实心白底，叠在毛玻璃上像贴了张纸条
       Button('取消')
-        .fontSize(16)
-        .fontColor(themeText(AppConfig.darkMode))
-        .backgroundColor(themeBg(AppConfig.darkMode))
-        .width('90%')
-        .height(44)
-        .margin({ bottom: 16 })
+        .fontSize(15)
+        .fontColor(themeSubText(AppConfig.darkMode))
+        .backgroundColor(Color.Transparent)
+        .width('100%')
+        .height(46)
+        .margin({ top: 6, bottom: 8 })
         .onClick((): void => {
           this.onCancel();
           this.controller.close();
         });
     }
     .width('100%')
-    .backgroundColor(themeBg(AppConfig.darkMode))
-    .borderRadius(12);
+    .backdropBlur(dialogBlurRadius(materialEnabled(AppConfig.ambientEnabled)))
+    .backgroundColor(dialogSurface(AppConfig.darkMode, materialEnabled(AppConfig.ambientEnabled)))
+    .borderRadius(20);
+  }
+
+  @Builder
+  ActionChip(label: string, bgColor: string, strokeColor: string, fgColor: string,
+    filled: boolean, penalty: number) {
+    Button(label)
+      .fontSize(16)
+      .fontWeight(filled ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(fgColor)
+      .backgroundColor(bgColor)
+      .border({ width: 1, color: strokeColor })
+      .layoutWeight(1)
+      .height(46)
+      .borderRadius(23)
+      .onClick((): void => {
+        this.onConfirm(penalty);
+        this.controller.close();
+      });
   }
 
   formatDisplayTime(): string {
@@ -937,7 +953,8 @@ struct ResultDetailDialog {
     }
     .width('90%')
     .constraintSize({ maxHeight: '85%' })
-    .backgroundColor(themeBg(AppConfig.darkMode))
+    .backdropBlur(dialogBlurRadius(materialEnabled(AppConfig.ambientEnabled)))
+    .backgroundColor(dialogSurface(AppConfig.darkMode, materialEnabled(AppConfig.ambientEnabled)))
     .borderRadius(16);
   }
 }
@@ -1003,7 +1020,8 @@ struct ManualInputDialog {
       .padding({ bottom: 16 });
     }
     .width('100%')
-    .backgroundColor(themeBg(AppConfig.darkMode))
+    .backdropBlur(dialogBlurRadius(materialEnabled(AppConfig.ambientEnabled)))
+    .backgroundColor(dialogSurface(AppConfig.darkMode, materialEnabled(AppConfig.ambientEnabled)))
     .borderRadius(12);
   }
 }
@@ -1063,6 +1081,10 @@ struct Index {
   // 背景主题
   @State bgImageUri: string = '';
   @State bgOpacity: number = 80;
+  // 沉浸光感：设备能力 + 用户开关 + 打底渐变
+  @State ambientUsable: boolean = false;
+  @State ambientOn: boolean = true;
+  @State gradientId: string = 'aurora';
   // 背景图裁剪
   @State showBgCrop: boolean = false;
   @State bgCropSrcUri: string = '';
@@ -1183,6 +1205,7 @@ struct Index {
   aboutToAppear(): void {
     initAlgorithmCache(getContext(this) as common.UIAbilityContext);
     this.loadBottomSafeInset();
+    this.initAmbient();
     this.dct.setCallback((time: number, state: TimerState): void => {
       this.timerState = state;
       this.timerText = StringUtils.timeToString(time);
@@ -1334,7 +1357,38 @@ struct Index {
     }
   }
 
-  // ===== 主题（浅色/深色/跟随系统）=====
+  // ===== 沉浸光感 =====
+  /**
+   * 初始化光感能力。
+   * 关键：设备不支持时必须退回普通不透明栏，否则会得到「没有内容却半透明」
+   * 的怪效果，文字可读性反而变差。
+   */
+  initAmbient(): void {
+    this.ambientUsable = materialSupported();
+    this.ambientOn = AppConfig.ambientEnabled;
+    this.gradientId = AppConfig.gradientId;
+  }
+
+  /** 当前是否真的要套材质（设备支持 + 用户开启） */
+  ambientActive(): boolean {
+    return this.ambientUsable && this.ambientOn;
+  }
+
+  /** 用户没设自定义背景时才用内置渐变打底 —— 材质模糊需要有内容 */
+  showAmbientBackdrop(): boolean {
+    return this.bgImageUri.length === 0;
+  }
+
+  /** 当前打底渐变的色段 */
+  ambientColors(): GradientStops {
+    return schemeColors(findScheme(this.gradientId), this.isDark);
+  }
+
+  ambientAngle(): number {
+    return findScheme(this.gradientId).angle;
+  }
+
+
   /**
    * 读取当前系统是否为深色。
    * 权威来源 = AppStorage['dcSystemDark']（EntryAbility 的应用级环境回调实时写入，
@@ -1471,8 +1525,12 @@ struct Index {
     AppConfig.bgImageUri = prefs.getSync('bgImageUri', '') as string;
     AppConfig.bgOpacity = prefs.getSync('bgOpacity', 80) as number;
     AppConfig.privacyAgreed = prefs.getSync('privacyAgreed', false) as boolean;
+    AppConfig.ambientEnabled = prefs.getSync('ambientEnabled', true) as boolean;
+    AppConfig.gradientId = prefs.getSync('gradientId', 'aurora') as string;
     this.bgImageUri = AppConfig.bgImageUri;
     this.bgOpacity = AppConfig.bgOpacity;
+    this.ambientOn = AppConfig.ambientEnabled;
+    this.gradientId = findScheme(AppConfig.gradientId).id;
     AppConfig.timerFont = prefs.getSync('timerFont', 0) as number;
     AppConfig.fontSize = prefs.getSync('fontSize', 72) as number;
     AppConfig.keepScreenOn = prefs.getSync('keepScreenOn', true) as boolean;
@@ -1574,6 +1632,8 @@ struct Index {
     prefs.putSync('schemeW', DctScrambler.schemeW.join(','));
     prefs.putSync('schemeM', DctScrambler.schemeM.join(','));
     prefs.putSync('currentSessionIndex', this.currentSessionIndex);
+    prefs.putSync('ambientEnabled', AppConfig.ambientEnabled);
+    prefs.putSync('gradientId', AppConfig.gradientId);
 
     let sessionObjs: Record<string, Object>[] = [];
     for (let i: number = 0; i < this.sessions.length; i++) {
@@ -2407,7 +2467,11 @@ struct Index {
           { id: 42, title: '计时器大小', detail: AppConfig.fontSize + 'sp', type: 0, value: false },
           { id: 43, title: '选择背景图片', detail: AppConfig.bgImageUri.length > 0 ? '已设置' : '未设置', type: 0, value: false },
           { id: 44, title: '背景透明度', detail: AppConfig.bgOpacity + '%', type: 2, value: false },
-          { id: 45, title: '深色模式', detail: this.themeModeDesc(), type: 0, value: false }
+          { id: 45, title: '深色模式', detail: this.themeModeDesc(), type: 0, value: false },
+          // 沉浸光感（HarmonyOS 7 系统材质）。设备不支持时置灰不可点，避免用户开了没反应。
+          { id: 46, title: '沉浸光感', detail: this.ambientUsable ? '顶栏/弹窗半透明模糊' : '当前设备不支持',
+            type: 1, value: AppConfig.ambientEnabled && this.ambientUsable },
+          { id: 47, title: '光感配色', detail: findScheme(AppConfig.gradientId).name, type: 0, value: false }
         ]
       },
       {
@@ -2610,6 +2674,24 @@ struct Index {
         AppConfig.themeMode = (AppConfig.themeMode + 1) % 3;
         this.applyEffectiveDark(true);
         break;
+      case 46:
+        // 开关：点一下切换，不支持材质的设备不允许开
+        if (!this.ambientUsable) {
+          return;
+        }
+        AppConfig.ambientEnabled = !AppConfig.ambientEnabled;
+        this.ambientOn = AppConfig.ambientEnabled;
+        break;
+      case 47:
+        // 循环切换内置渐变
+        for (let i = 0; i < GRADIENT_SCHEMES.length; i++) {
+          if (GRADIENT_SCHEMES[i].id === AppConfig.gradientId) {
+            AppConfig.gradientId = GRADIENT_SCHEMES[(i + 1) % GRADIENT_SCHEMES.length].id;
+            break;
+          }
+        }
+        this.gradientId = findScheme(AppConfig.gradientId).id;
+        break;
       case 81:
       case 82:
       case 83:
@@ -2678,14 +2760,25 @@ struct Index {
   getResultRowBg(displayIdx: number): string {
     let hasBg: boolean = this.bgImageUri.length > 0;
     if (displayIdx % 2 === 0) {
-      return contentBg(this.isDark, this.bgImageUri.length > 0);
+      return contentBg(this.isDark, hasBg, this.ambientActive());
     }
-    return itemBg(this.isDark, this.bgImageUri.length > 0);
+    return itemBg(this.isDark, hasBg, this.ambientActive());
   }
 
   // ===== 主界面构建 =====
   build() {
     Stack() {
+      // 打底（光感的必要性）：系统材质是靠模糊「背后的内容」出效果的，
+      // 纯色背景模糊出来还是一块纯色，等于没开。所以没设自定义背景时，
+      // 铺一层内置渐变当素材，让顶栏/底部栏/弹窗有东西可模糊。
+      if (this.showAmbientBackdrop()) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .linearGradient({ angle: this.ambientAngle(), colors: this.ambientColors() })
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
+      }
+
       // 背景图层 — 沉浸式下铺满整个屏幕（含状态栏与手势条区域）
       if (this.bgImageUri.length > 0) {
         Image(this.bgImageUri)
@@ -2707,8 +2800,10 @@ struct Index {
           }
           .width('100%')
           .height(48)
-          .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0));
-        }
+          .systemMaterial(this.ambientActive() ? barMaterial(true) : undefined)
+          // 注意：材质生效时不能写 backgroundColor（连 Transparent 也不行），
+          // 否则会把材质盖掉、变成完全透视。只有回退纯色时才给底色。
+          .backgroundColor(this.ambientActive() ? undefined : contentBg(this.isDark, this.bgImageUri.length > 0));        }
 
         // 内容区域
         if (this.currentTab === 0) {
@@ -2763,10 +2858,18 @@ struct Index {
         // 超出屏幕的底部（完整解法公式）被直接裁掉，导致"公式显示不全"。
         .width('100%')
         .height('80%')
-        .backgroundColor(this.isDark ? '#1e1e1e' : '#ffffff')
         .borderRadius({ topLeft: 16, topRight: 16 })
         // 底部垫高安全区，避免弹窗内容被手势条遮挡（审核问题2）
-        .padding({ left: 20, right: 20, top: 20, bottom: 20 + this.bottomSafeInset });
+        .padding({ left: 20, right: 20, top: 20, bottom: 20 + this.bottomSafeInset })
+        // 弹窗用 backdropBlur + 显式半透明底色，而不是 systemMaterial / backgroundBlurStyle：
+        // - systemMaterial 与 backgroundColor 互斥，写在一起弹窗会变全透视、内容重叠（实测）；
+        // - backgroundBlurStyle 的 COMPONENT_* 档位自带浅色材质，深色模式下弹窗会变浅灰
+        //   （实测 rgb(199,199,201)），跟着主题走的前提是自己掌握底色。
+        // backdropBlur 只负责「模糊背后的东西」，底色由 backgroundColor 决定，能跟随深浅色。
+        .backdropBlur(this.ambientActive() ? 28 : 0)
+        .backgroundColor(this.ambientActive()
+          ? (this.isDark ? 'rgba(26,26,30,0.82)' : 'rgba(255,255,255,0.82)')
+          : (this.isDark ? '#1e1e1e' : '#ffffff'));
       }
 
       // 背景图裁剪层（全屏覆盖）
@@ -2815,7 +2918,7 @@ struct Index {
           .width('100%')
           .height(40)
           .padding({ left: 16, right: 16 })
-          .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
+          .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
           .border({ width: { bottom: 1 }, color: themeDivider(this.isDark) })
           .onClick((): void => { this.togglePuzzleDropdown(); });
         }
@@ -2931,7 +3034,7 @@ struct Index {
                 }
               }
               .fontColor(themeSubText(this.isDark))
-              .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
+              .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
               .border({ width: 1, color: themeDivider(this.isDark), radius: 6 })
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
               .margin({ left: 8 })
@@ -2946,7 +3049,7 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0))
+      .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
 
       // 右下角打乱图（智能魔方 3D 同步已移除，保留代码后续再接）
       if (this.timerState !== TimerState.RUNNING && AppConfig.showScrambleImage) {
@@ -2975,7 +3078,7 @@ struct Index {
                     .fontSize(15)
                     .fontWeight(this.dropdownCategoryIdx === catIdx ? FontWeight.Bold : FontWeight.Normal)
                     .fontColor(this.dropdownCategoryIdx === catIdx ? '#ffffff' : themeText(this.isDark))
-                    .backgroundColor(this.dropdownCategoryIdx === catIdx ? COLOR_ACCENT : itemBg(this.isDark, this.bgImageUri.length > 0))
+                    .backgroundColor(this.dropdownCategoryIdx === catIdx ? COLOR_ACCENT : Color.Transparent)
                     .width('100%')
                     .height(44)
                     .textAlign(TextAlign.Center)
@@ -2987,7 +3090,6 @@ struct Index {
             .width(100)
             .height('100%')
             .scrollBar(BarState.Off)
-            .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
             .border({ width: { right: 1 }, color: themeDivider(this.isDark) });
 
             Scroll() {
@@ -3010,7 +3112,6 @@ struct Index {
                   .width('100%')
                   .height(44)
                   .padding({ left: 16, right: 16 })
-                  .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
                   .onClick((): void => {
                     this.selectPuzzleItem(this.dropdownCategoryIdx, itemIdx);
                   });
@@ -3020,12 +3121,20 @@ struct Index {
             }
             .layoutWeight(1)
             .height('100%')
-            .scrollBar(BarState.Off)
-            .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0));
+            .scrollBar(BarState.Off);
           }
           .width('100%')
           .height('72%')
-          .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0));
+          // 下拉面板只在这里上底色，左右两列不再各铺一层。
+          // 之前三层 rgba(...,0.45) 叠起来等效不透明度 ~0.83，看上去就是一块纯白，
+          // 光感全被吃掉；现在面板单层 + backdropBlur，才是一块真的毛玻璃浮层。
+          .backdropBlur(this.ambientActive() ? 20 : 0)
+          .backgroundColor(this.ambientActive()
+            ? blockSurface(this.isDark, true)
+            : themeBg(this.isDark))
+          .borderRadius(14)
+          .clip(true)
+          .border({ width: this.ambientActive() ? 0 : 1, color: themeDivider(this.isDark) });
 
           Column()
             .width('100%')
@@ -3049,14 +3158,14 @@ struct Index {
         Button('＋')
           .width(50)
           .height(38)
-          .backgroundColor(themeBg(this.isDark))
+          .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
           .fontColor(themeSubText(this.isDark))
           .fontSize(16)
           .onClick((): void => { this.createNewSession(); });
 
         Text(this.sessionName)
           .height(38)
-          .backgroundColor(themeBg(this.isDark))
+          .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
           .fontColor(themeText(this.isDark))
           .fontSize(15)
           .layoutWeight(1)
@@ -3067,7 +3176,7 @@ struct Index {
         Button('✕')
           .width(50)
           .height(38)
-          .backgroundColor(themeBg(this.isDark))
+          .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
           .fontColor(themeSubText(this.isDark))
           .fontSize(16)
           .onClick((): void => { this.clearAllResults(); });
@@ -3075,7 +3184,7 @@ struct Index {
         Button('⬇')
           .width(50)
           .height(38)
-          .backgroundColor(themeBg(this.isDark))
+          .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
           .fontColor(themeSubText(this.isDark))
           .fontSize(16)
           .onClick((): void => { this.showExportDialog(); });
@@ -3091,7 +3200,7 @@ struct Index {
         }
         .width(50)
         .height(38)
-        .backgroundColor(themeBg(this.isDark))
+        .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()))
         .fontColor(themeSubText(this.isDark))
         .fontSize(16)
         .onClick((): void => {
@@ -3226,7 +3335,7 @@ struct Index {
     // 用 layoutWeight 而非 height('100%')：后者按父容器总高计算，
     // 会吃掉父级的安全区 padding，导致底栏被顶出屏幕（审核问题2）
     .layoutWeight(1)
-    .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0));
+    .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()));
   }
 
   // ===== 设置页面 =====
@@ -3324,7 +3433,9 @@ struct Index {
               .fontSize(14)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.currentSettingSection === index ? COLOR_ACCENT : themeSubText(this.isDark))
-              .backgroundColor(this.currentSettingSection === index ? COLOR_ACCENT_BG : themeBg(this.isDark))
+              .backgroundColor(this.currentSettingSection === index
+                ? COLOR_ACCENT_BG
+                : (this.ambientActive() ? Color.Transparent : themeBg(this.isDark)))
               .padding({ left: 16, right: 16 })
               .height(48)
               .textAlign(TextAlign.Center)
@@ -3364,7 +3475,8 @@ struct Index {
               .fontColor(COLOR_ACCENT)
               .width('100%')
               .padding({ left: 15, right: 15, top: 20, bottom: 5 })
-              .backgroundColor(themeBg(this.isDark));
+              // 光感开启时让分区标题透出底层渐变，避免一条条纯色横块打断画面
+              .backgroundColor(this.ambientActive() ? Color.Transparent : themeBg(this.isDark));
           }
 
           // 分区项目
@@ -3445,7 +3557,7 @@ struct Index {
     .width('100%')
     // 同 ResultTab：用 layoutWeight 保留父级安全区 padding（审核问题2）
     .layoutWeight(1)
-    .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0));
+    .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0, this.ambientActive()));
   }
 }
 
@@ -3581,7 +3693,8 @@ struct PrivacyDialog {
     }
     .width('90%')
     .height('82%')
-    .backgroundColor(themeBg(AppConfig.darkMode))
+    .backdropBlur(dialogBlurRadius(materialEnabled(AppConfig.ambientEnabled)))
+    .backgroundColor(dialogSurface(AppConfig.darkMode, materialEnabled(AppConfig.ambientEnabled)))
     .borderRadius(16)
     .padding(16);
   }
@@ -3651,7 +3764,8 @@ struct ExportDialog {
       .width('100%');
     }
     .width('90%')
-    .backgroundColor(themeBg(AppConfig.darkMode))
+    .backdropBlur(dialogBlurRadius(materialEnabled(AppConfig.ambientEnabled)))
+    .backgroundColor(dialogSurface(AppConfig.darkMode, materialEnabled(AppConfig.ambientEnabled)))
     .borderRadius(16)
     .padding(16);
   }

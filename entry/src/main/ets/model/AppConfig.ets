@@ -47,6 +47,10 @@ export class AppConfig {
   static bgImageUri: string = '';
   static bgOpacity: number = 80; // 0-100, 0=完全透明, 100=完全不透明
 
+  // 沉浸光感设置（HarmonyOS 7 系统材质）
+  static ambientEnabled: boolean = true;   // 总开关：顶栏/底部栏/弹窗用系统材质
+  static gradientId: string = 'aurora';    // 没设背景图时打底的内置渐变
+
   // 隐私政策
   static privacyAgreed: boolean = false;
 
