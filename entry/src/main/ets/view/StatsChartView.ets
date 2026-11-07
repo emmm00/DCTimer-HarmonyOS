@@ -14,6 +14,8 @@ const CHART_PADDING_BOTTOM: number = 32;
 export struct StatsChartView {
   @Prop results: ResultEntry[] = [];
   @Prop darkMode: boolean = false;
+  // 沉浸光感开启时，Canvas 不填底色，让页面级渐变透出来（否则整块白底和光感割裂）
+  @Prop transparentBg: boolean = false;
 
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
@@ -113,9 +115,13 @@ export struct StatsChartView {
     const w: number = this.canvasW;
     const h: number = this.canvasH;
 
-    // 清屏
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, w, h);
+    // 清屏：光感模式下清成透明，露出页面渐变；否则填主题底色
+    if (this.transparentBg) {
+      ctx.clearRect(0, 0, w, h);
+    } else {
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, w, h);
+    }
 
     const validResults: number[] = [];
     const validIndices: number[] = [];

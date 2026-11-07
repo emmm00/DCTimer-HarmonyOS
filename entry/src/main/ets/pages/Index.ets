@@ -1798,7 +1798,7 @@ struct Index {
       this.avg1Text = '--';
       this.avg2Text = '--';
       this.sessionMeanText = '平均(0/0): -- (σ = --)';
-      this.statText = '0/0)\n最佳: --\n' + this.getAvgLabel(AppConfig.avg1Type, AppConfig.avg1Len) + ': --\n' +
+      this.statText = '(0/0)\n最佳: --\n' + this.getAvgLabel(AppConfig.avg1Type, AppConfig.avg1Len) + ': --\n' +
         this.getAvgLabel(AppConfig.avg2Type, AppConfig.avg2Len) + ': --';
       this.minIdx = -1;
       this.maxIdx = -1;
@@ -1812,8 +1812,8 @@ struct Index {
     this.bestText = this.result.getBestTime();
     this.avg1Text = this.result.getRollingAvg1(len - 1);
     this.avg2Text = this.result.getRollingAvg2(len - 1);
-    this.sessionMeanText = '平均(' + this.result.getSessionMean() + ')';
-    this.statText = len + '/' + len + ')\n最佳: ' + this.bestText + '\n' +
+    this.sessionMeanText = '平均' + this.result.getSessionMean();
+    this.statText = '(' + len + '/' + len + ')\n最佳: ' + this.bestText + '\n' +
       this.getAvgLabel(AppConfig.avg1Type, AppConfig.avg1Len) + ': ' + this.avg1Text + '\n' +
       this.getAvgLabel(AppConfig.avg2Type, AppConfig.avg2Len) + ': ' + this.avg2Text;
   }
@@ -3218,7 +3218,8 @@ struct Index {
         Column() {
           StatsChartView({
             results: this.results,
-            darkMode: this.isDark
+            darkMode: this.isDark,
+            transparentBg: this.ambientActive()
           })
             .width('100%')
             .layoutWeight(1);

@@ -196,7 +196,7 @@ export class Stats {
     this.maxIdx = this.minIdx = this.mean = -1;
     this.solved = this.result.getLength();
     if (this.solved === 0) {
-      return '0/0): N/A (N/A)';
+      return '(0/0): N/A (N/A)';
     }
     if (this.bestTimeRecord.length <= this.result.getLength()) {
       this.bestTimeRecord = new Array<boolean>(Math.floor(this.result.getLength() * 3 / 2)).fill(false);
@@ -231,14 +231,14 @@ export class Stats {
       }
     }
     if (this.solved === 0) {
-      return '0/' + this.result.getLength() + '): N/A (N/A)';
+      return '(0/' + this.result.getLength() + '): N/A (N/A)';
     }
     this.mean = Math.floor(sum / this.solved + 0.5);
     if (AppConfig.timerAccuracy === 0) {
       this.mean *= 10;
     }
     this.sd = Math.floor(Math.sqrt((sum2 - sum * sum / this.solved) / this.solved) + 0.5);
-    return this.solved + '/' + this.result.getLength() + '): ' +
+    return '(' + this.solved + '/' + this.result.getLength() + '): ' +
       StringUtils.timeToString(this.mean) + ' (' + this.getSD(this.sd) + ')';
   }
 
