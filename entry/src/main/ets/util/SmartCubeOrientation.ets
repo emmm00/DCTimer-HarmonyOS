@@ -265,6 +265,40 @@ export class SmartCubeOrientation {
     return 5;
   }
 
+  /**
+   * 单层转动(与智能魔方 onCubeMove 对齐)。
+   * faceIndex: 0=U 1=R 2=F 3=D 4=L 5=B; dir: 0=顺时针 1=180° 2=逆时针。
+   * 返回转动后的 facelet 字符串(长度 54)。若输入非法则原样返回。
+   * 注意：回合/朝向符号需在真机上按协议校准，此处保证自洽并可编译。
+   */
+  static rotateMoveFacelets(facelets: string, faceIndex: number, dir: number): string {
+    if (facelets == null || facelets.length < 54) {
+      return facelets;
+    }
+    // 轴: 0=X(R/L) 1=Y(U/D) 2=Z(F/B); 层偏移: 顶部/正面/右面为 +1，对侧为 -1
+    const axis = faceIndex === 0 || faceIndex === 3 ? 1 : (faceIndex === 1 || faceIndex === 4 ? 0 : 2);
+    const layerVal = (faceIndex === 3 || faceIndex === 4 || faceIndex === 5) ? -1 : 1;
+    const times = dir === 0 ? 1 : (dir === 1 ? 2 : 3);
+    const rotated: string[] = new Array<string>(54).fill('');
+    for (let i = 0; i < SmartCubeOrientation.STICKERS.length; i++) {
+      const s = SmartCubeOrientation.STICKERS[i];
+      const layerCoord = axis === 0 ? s.x : (axis === 1 ? s.y : s.z);
+      if (layerCoord !== layerVal) {
+        rotated[i] = facelets.charAt(i);
+        continue;
+      }
+      let t: Sticker = s;
+      for (let k = 0; k < times; k++) {
+        t = t.rotate(axis);
+      }
+      const f = SmartCubeOrientation.getFaceIndex(t.nx, t.ny, t.nz);
+      const row = SmartCubeOrientation.getRow(f, t.x, t.y, t.z);
+      const col = SmartCubeOrientation.getCol(f, t.x, t.y, t.z);
+      rotated[f * 9 + row * 3 + col] = facelets.charAt(i);
+    }
+    return rotated.join('');
+  }
+
   static getRow(face: number, x: number, y: number, z: number): number {
     switch (face) {
       case 0:

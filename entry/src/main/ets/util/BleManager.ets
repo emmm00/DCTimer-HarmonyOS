@@ -15,6 +15,7 @@ import {
   CubeType, CubeDeviceInfo, CubeConnectionState, CubeMove,
   guessCubeType, parseGiikerMove, GIIKER_SERVICES, GAN_SERVICES
 } from './SmartCubeProtocol';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 /** BLE 状态变化回调 */
 export interface BleCallbacks {
@@ -36,28 +37,21 @@ export class BleManager {
   private moveCallback: ((move: CubeMove) => void) | null = null;
 
   // --- 扫描 ---
+  private scanErrorCount: number = 0;
 
   startScan(cb: BleCallbacks): void {
     this.callbacks = cb;
     this.scanResults = [];
+    this.scanErrorCount = 0; // 每次扫描重置重试计数
     this.connectionState = CubeConnectionState.SCANNING;
     this.isScanning = true;
 
+    // 先注销旧监听，避免重复注册导致首次扫描异常
     try {
-      const scanOptions: ble.ScanOptions = {
-        interval: 0,
-        dutyMode: ble.ScanDuty.SCAN_MODE_LOW_POWER,
-        matchMode: ble.MatchMode.MATCH_MODE_AGGRESSIVE
-      };
-      ble.startBLEScan(null, scanOptions);
-    } catch (e) {
-      if (this.callbacks) {
-        this.callbacks.onError('BLE 扫描启动失败');
-      }
-      return;
+      ble.off('BLEDeviceFind');
+    } catch (_e) {
+      // ignore
     }
-
-    // 监听扫描结果 — BLEDeviceFind 是 HarmonyOS 标准的 BLE 扫描事件
     ble.on('BLEDeviceFind', (data: Array<ble.ScanResult>): void => {
       if (!this.isScanning) {
         return;
@@ -86,12 +80,50 @@ export class BleManager {
         }
       }
     });
+
+    try {
+      const scanOptions: ble.ScanOptions = {
+        interval: 0,
+        dutyMode: ble.ScanDuty.SCAN_MODE_LOW_POWER,
+        matchMode: ble.MatchMode.MATCH_MODE_AGGRESSIVE
+      };
+      ble.startBLEScan(null, scanOptions);
+    } catch (e) {
+      // 首次扫描常因权限/蓝牙状态尚未就绪失败，自动重试一次
+      if (this.scanErrorCount < 1) {
+        this.scanErrorCount++;
+        setTimeout((): void => {
+          try {
+            ble.startBLEScan(null, {
+              interval: 0,
+              dutyMode: ble.ScanDuty.SCAN_MODE_LOW_POWER,
+              matchMode: ble.MatchMode.MATCH_MODE_AGGRESSIVE
+            });
+          } catch (_e2) {
+            if (this.callbacks) {
+              this.callbacks.onError('BLE 扫描启动失败');
+            }
+            this.isScanning = false;
+          }
+        }, 300);
+        return;
+      }
+      if (this.callbacks) {
+        this.callbacks.onError('BLE 扫描启动失败');
+      }
+      this.isScanning = false;
+    }
   }
 
   stopScan(): void {
     this.isScanning = false;
     try {
       ble.stopBLEScan();
+    } catch (_e) {
+      // ignore
+    }
+    try {
+      ble.off('BLEDeviceFind');
     } catch (_e) {
       // ignore
     }
@@ -125,6 +157,7 @@ export class BleManager {
             this.callbacks.onConnectionStateChange(
               CubeConnectionState.READY, this.connectedDeviceName);
           }
+          this.setupNotifier();
         } else if (data.state === 0) {
           // 断开连接
           this.connectionState = CubeConnectionState.DISCONNECTED;
@@ -160,10 +193,80 @@ export class BleManager {
   }
 
   private cleanupConnection(): void {
+    if (this.gattClient) {
+      try {
+        this.gattClient.off('BLECharacteristicChange');
+      } catch (_e) {
+        // ignore
+      }
+    }
     this.gattClient = null;
     this.connectedDevice = '';
     this.connectedDeviceName = '';
     this.connectionState = CubeConnectionState.DISCONNECTED;
+  }
+
+  // --- 通知订阅与转动解析 ---
+
+  private setupNotifier(): void {
+    const client = this.gattClient;
+    if (client == null) {
+      return;
+    }
+    try {
+      client.on('BLECharacteristicChange', (characteristic: ble.BLECharacteristic): void => {
+        this.handleNotify(characteristic);
+      });
+    } catch (_e) {
+      // ignore
+    }
+    // 服务发现后订阅已知魔方数据特征
+    client.getServices().then((services: Array<ble.GattService>): void => {
+      for (const svc of services) {
+        for (const ch of svc.characteristics) {
+          if (this.isCubeCharacteristic(ch.characteristicUuid)) {
+            try {
+              client.setCharacteristicChangeNotification(ch, true);
+            } catch (_e) {
+              // ignore
+            }
+          }
+        }
+      }
+    }).catch((err: BusinessError): void => {
+      // 服务发现失败时保持界面可操作，不做额外处理
+    });
+  }
+
+  private isCubeCharacteristic(uuid: string): boolean {
+    const u: string = (uuid || '').toLowerCase();
+    return u === GIIKER_SERVICES.CHARACTER_DATA.toLowerCase()
+      || u === GAN_SERVICES.CHARACTER_F2.toLowerCase()
+      || u === GAN_SERVICES.CHARACTER_F3.toLowerCase()
+      || u === GAN_SERVICES.CHARACTER_F5.toLowerCase()
+      || u === GAN_SERVICES.CHARACTER_F6.toLowerCase()
+      || u === GAN_SERVICES.CHARACTER_F7.toLowerCase();
+  }
+
+  private handleNotify(characteristic: ble.BLECharacteristic): void {
+    try {
+      const arr: Uint8Array = new Uint8Array(characteristic.characteristicValue);
+      const move: CubeMove | null = parseGiikerMove(arr);
+      if (move != null) {
+        this.dispatchCubeMove(move);
+      }
+    } catch (_e) {
+      // ignore
+    }
+  }
+
+  private dispatchCubeMove(move: CubeMove): void {
+    if (this.moveCallback) {
+      this.moveCallback(move);
+    }
+    if (this.callbacks) {
+      this.callbacks.onCubeMove(move);
+    }
   }
 
   getConnectionState(): CubeConnectionState {

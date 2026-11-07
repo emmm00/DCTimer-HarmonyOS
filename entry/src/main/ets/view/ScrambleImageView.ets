@@ -34,6 +34,9 @@ export struct ScrambleImageView {
   @Prop @Watch('onChanged') scramble: string = '';
   @Prop @Watch('onChanged') puzzleSize: number = 3;
   @Prop @Watch('onChanged') puzzleCode: number = 33;
+  // 配色变更版本号：配色是 Scrambler 静态表，scramble/puzzleCode 不变时
+  // 靠 bump 此值触发重绘（Index.onSchemeConfirm）
+  @Prop @Watch('onChanged') schemeVersion: number = 0;
 
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private context: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
@@ -74,12 +77,20 @@ export struct ScrambleImageView {
     this.scrambler.parseScramble(toDctimerCategory(this.puzzleCode), this.scramble);
     const adapter: ScrambleCanvasAdapter = new ScrambleCanvasAdapter(ctx);
     const p: PaintState = new PaintState();
-    // 金字塔按宽度等比绘制，高度约为宽度的 0.78 倍，画布高度不足时底部会被裁剪
+    // 大屏适配：打乱图按宽等比绘制，高度约为宽度的 fitRatio 倍。当画布高度不足
+    // （大屏宽度巨大时高度 220 固定，比例绘制会超高被底部裁切）时，收缩绘制宽
+    // 度让其完整落入画布，并横向居中。
+    const fitRatio: number = 0.85; // 覆盖 NxN(≈0.75)、金字塔 等常见类型的高宽比上界
     let dw: number = Math.floor(W);
-    if (this.puzzleSize === -70 && H < Math.floor(dw * 0.78) + 6) {
-      dw = Math.max(1, Math.floor((H - 6) / 0.78));
+    if (H < Math.floor(dw * fitRatio)) {
+      dw = Math.max(1, Math.floor(H / fitRatio));
+    }
+    ctx.save();
+    if (dw < W) {
+      ctx.translate(Math.floor((W - dw) / 2), 0);
     }
     this.scrambler.drawScramble(dw, p, adapter);
+    ctx.restore();
   }
 
   build() {

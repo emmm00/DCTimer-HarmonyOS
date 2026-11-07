@@ -5,6 +5,7 @@
 
 import { solveCross, CROSS_FACE_OPTIONS, CROSS_FACE_VALUES } from '../util/CrossSolver';
 import { AppConfig } from '../model/AppConfig';
+import { FaceChipsRow } from './FaceChipsRow';
 
 @Component
 export struct CrossSolverView {
@@ -46,28 +47,20 @@ export struct CrossSolverView {
 
   build() {
     Column() {
-      // 底面选择
+      // 底面选择（与 CFOP/桥式页签同款色块选择器）
       Row() {
         Text('底面:')
           .fontSize(14)
           .fontColor(this.isDark ? '#9a9a9a' : '#666666')
           .width(50);
-        Row() {
-          ForEach(CROSS_FACE_OPTIONS, (opt: string, idx: number) => {
-            Text(opt.split(' ')[0])
-              .fontSize(13)
-              .fontColor(this.selectedFaceIdx === idx ? '#ffffff' : (this.isDark ? '#cccccc' : '#333333'))
-              .backgroundColor(this.selectedFaceIdx === idx ? '#448AFF' : (this.isDark ? '#3a3a3a' : '#eeeeee'))
-              .borderRadius(6)
-              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .margin({ right: 6 })
-              .onClick((): void => {
-                this.selectedFaceIdx = idx;
-                this.autoSolve();
-              });
-          });
-        }
-        .flexShrink(1);
+        FaceChipsRow({
+          selected: this.selectedFaceIdx,
+          isDark: this.isDark,
+          onPick: (idx: number): void => {
+            this.selectedFaceIdx = idx;
+            this.autoSolve();
+          }
+        });
       }
       .width('100%')
       .margin({ bottom: 12 });

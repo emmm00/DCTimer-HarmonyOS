@@ -189,7 +189,7 @@ function init(): void {
     }
   }
 
-  CrossTables.epd[69 * 24] = 0;
+  CrossTables.epd[1670] = 0;
   createPrun(CrossTables.epd, 6, CrossTables.epm, 3);
 
   CrossTables.eod[69 * 16] = 0;
@@ -273,7 +273,7 @@ let solutionSeq: number[] = new Array(20).fill(0);
 
 function idacross(ep: number, eo: number, d: number, lm: number): boolean {
   if (d === 0) {
-    return ep === 1656 && eo === 1104;
+    return ep === 1670 && eo === 1104;
   }
   if (CrossTables.epd[ep] > d || CrossTables.eod[eo] > d) {
     return false;
@@ -329,7 +329,8 @@ export function solveCross(scramble: string, bottomFace: number = 1): CrossSolut
   // 将 scramble 按所选底面做整体旋转映射，使该颜色位于 D 面坐标系下
   const rotatedMoves: string[] = rotateScramble(moves, bottomFace);
 
-  let ep: number = 1656;
+  // 十字已解状态：4 个底面棱位于 D 层，排列秩为 14（ep = 24*69 + 14 = 1670）
+  let ep: number = 1670;
   let eo: number = 1104;
 
   // 应用映射后的打乱
@@ -343,7 +344,7 @@ export function solveCross(scramble: string, bottomFace: number = 1): CrossSolut
     eo = state.eo;
   }
 
-  if (ep === 1656 && eo === 1104) {
+  if (ep === 1670 && eo === 1104) {
     const solvedResult: CrossSolution = { title: buildTitle(bottomFace), solution: '（十字已完成，无需求解）' };
     return solvedResult;
   }

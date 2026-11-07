@@ -23,7 +23,12 @@ export class AppConfig {
   static timerFont: number = 0; // 0=LCD数码管, 1=系统字体
   static fontSize: number = 72; // 计时器字号
   static colors: number[] = [0xffffffff, 0xff000000, 0xffff00ff, 0xffee3333, 0xff009900, 0xff1e1e1e, 0xffe8e8e8];
+  // 主题模式：0=浅色, 1=深色, 2=跟随系统
+  static themeMode: number = 0;
+  // 当前生效的明暗（主题函数读此项）
   static darkMode: boolean = false;
+  // 当前系统是否为深色（跟随系统模式时使用）
+  static systemDark: boolean = true;
 
   // 手势设置
   static swipeType: number[] = [1, 2, 3, 5]; // 左/右/上/下

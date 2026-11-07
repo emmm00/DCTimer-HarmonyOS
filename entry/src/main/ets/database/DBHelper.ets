@@ -47,7 +47,39 @@ export class DBHelper implements ResultDB {
 
     if (!tableExists) {
       await this.onCreate();
+    } else {
+      await this.onUpgrade();
     }
+  }
+
+  /** 列结构迁移：为成绩表补上 puzzle 列（记录成绩所属设备/项目，详情打乱图不随当前项目漂移） */
+  private async ensureColumn(tableName: string, columnName: string, type: string): Promise<void> {
+    if (!this.rdbStore) return;
+    const infoSql = 'PRAGMA table_info(' + tableName + ')';
+    const rs = await this.rdbStore.querySql(infoSql);
+    let has = false;
+    if (rs.rowCount > 0) {
+      while (rs.goToNextRow()) {
+        if (rs.getString(1) === columnName) {
+          has = true;
+          break;
+        }
+      }
+    }
+    rs.close();
+    if (!has) {
+      await this.rdbStore.executeSql('ALTER TABLE ' + tableName + ' ADD COLUMN ' + columnName + ' ' + type);
+    }
+  }
+
+  private async onUpgrade(): Promise<void> {
+    if (!this.rdbStore) return;
+    // 前 15 个成绩表
+    for (let i = 0; i < 15; i++) {
+      await this.ensureColumn(DBHelper.TBL_NAME[i], 'puzzle', 'INTEGER');
+    }
+    // 自定义会话成绩表
+    await this.ensureColumn(DBHelper.TBL_NAME[15], 'puzzle', 'INTEGER');
   }
 
   private async onCreate(): Promise<void> {
@@ -60,7 +92,7 @@ export class DBHelper implements ResultDB {
         rest INTEGER NOT NULL, resp INTEGER NOT NULL, resd INTEGER NOT NULL,
         scr TEXT NOT NULL, time TEXT, note TEXT,
         p1 INTEGER, p2 INTEGER, p3 INTEGER, p4 INTEGER, p5 INTEGER, p6 INTEGER,
-        moves TEXT, solve_meta TEXT)`;
+        moves TEXT, solve_meta TEXT, puzzle INTEGER)`;
       await this.rdbStore.executeSql(sql);
     }
 
@@ -77,7 +109,7 @@ export class DBHelper implements ResultDB {
         rest INTEGER NOT NULL, resp INTEGER NOT NULL, resd INTEGER NOT NULL,
         scr TEXT, time TEXT, note TEXT,
         p1 INTEGER, p2 INTEGER, p3 INTEGER, p4 INTEGER, p5 INTEGER, p6 INTEGER,
-        moves TEXT, solve_meta TEXT)`
+        moves TEXT, solve_meta TEXT, puzzle INTEGER)`
     );
   }
 

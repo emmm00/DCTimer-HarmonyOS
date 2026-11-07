@@ -3,9 +3,11 @@ import { AppConfig } from '../model/AppConfig';
 import { Scrambler as DctScrambler } from '../scrambler/Scrambler';
 import { AppGlobals } from '../model/AppGlobals';
 import { Tools } from '../cs/min2phase/Tools';
-import { Util } from '../cs/threephase/Util';
 import { FileIO } from '../util/FileIO';
-import { common } from '@kit.AbilityKit';
+import { setSbJointCacheDir } from '../solver/SolverCore';
+import { warmSolverCachesOffThread } from '../solver/WarmCaches';
+import { common, ConfigurationConstant } from '@kit.AbilityKit';
+import { SYSTEM_DARK_KEY, BOTTOM_INSET_KEY, TOP_INSET_KEY, MIN_BOTTOM_INSET_VP } from '../entryability/EntryAbility';
 import { resourceManager } from '@kit.LocalizationKit';
 import { Session } from '../model/Session';
 import { Result, ResultEntry } from '../model/Result';
@@ -13,25 +15,28 @@ import { DBHelper } from '../database/DBHelper';
 import { StringUtils } from '../util/StringUtils';
 import { initScrambleItems } from '../util/ScrambleItems';
 import { ScrambleImageView } from '../view/ScrambleImageView';
+import { ColorSchemeEditor } from '../view/ColorSchemeEditor';
+// SmartCube3DView 已从 UI 移除（智能魔方功能下线，组件文件保留后续再接）
 import { LcdText } from '../view/LcdText';
 import { StatsChartView } from '../view/StatsChartView';
 import { ExportUtil } from '../util/ExportUtil';
-import { CrossSolverView } from '../view/CrossSolverView';
+import { MethodSolverView } from '../view/MethodSolverView';
+import { TrainingView } from '../view/TrainingView';
+import { hasSolver } from '../util/SolverRouting';
+import { AppIcon } from '../view/AppIcons';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { BleScanDialog } from '../view/BleScanDialog';
+import { BgCropDialog } from '../view/BgCropDialog';
 import { BackgroundManager } from '../util/BackgroundManager';
 import { bleManager, BleCallbacks } from '../util/BleManager';
 import { CubeConnectionState, CubeMove, CubeDeviceInfo } from '../util/SmartCubeProtocol';
+import { SmartCubeOrientation } from '../util/SmartCubeOrientation';
 import dataPreferences from '@ohos.data.preferences';
 import promptAction from '@ohos.promptAction';
 import { window } from '@kit.ArkUI';
 import { vibrator } from '@kit.SensorServiceKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
-import webview from '@ohos.web.webview';
-
-// 隐私政策地址
-const PRIVACY_URL: string = 'https://719ef27c332c4519bb9ed911f26afb5b.app.workbuddy.link/';
 
 interface PrivacySection {
   title: string;
@@ -40,7 +45,7 @@ interface PrivacySection {
 
 // 隐私政策文字（与网页版一致）
 const PRIVACY_SECTIONS: PrivacySection[] = [
-  { title: '更新日期', body: '2026年8月17日' },
+  { title: '更新日期', body: '2026年8月29日' },
   { title: '', body: '本应用是一款魔方计时与训练工具。我们深知个人信息对您的重要性，并会尽全力保护您的个人信息安全可靠。' },
   { title: '一、我们收集的信息', body: '本应用不收集、不存储、不上传任何您的个人信息。您在使用本应用过程中产生的所有数据（包括但不限于计时成绩、训练分组、设置偏好等）均仅保存在您的设备本地，不会被传输至任何服务器。' },
   { title: '二、我们如何使用信息', body: '由于本应用不收集任何个人信息，因此不存在对您个人信息的使用、共享、转让或公开披露。' },
@@ -50,40 +55,6 @@ const PRIVACY_SECTIONS: PrivacySection[] = [
   { title: '六、联系我们', body: '如您对本隐私政策有任何疑问、意见或建议，可发送邮件至：2297005473@qq.com。' },
   { title: '七、政策更新', body: '本隐私政策可能会适时更新。更新后将在应用内公布，更新后的政策自公布之日起生效。' }
 ];
-
-// ===== 网页版隐私政策对话框（仅查看，由文字版底部超链接打开）=====
-@CustomDialog
-struct PrivacyWebDialog {
-  controller: CustomDialogController;
-  private webCtrl: webview.WebviewController = new webview.WebviewController();
-
-  build() {
-    Column() {
-      Row() {
-        Text('网页版隐私政策')
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(themeText(AppConfig.darkMode))
-          .layoutWeight(1);
-        Button('关闭')
-          .fontSize(14)
-          .fontColor(COLOR_ACCENT)
-          .backgroundColor(Color.Transparent)
-          .onClick((): void => { this.controller.close(); });
-      }
-      .width('100%')
-      .padding({ left: 8, right: 8, bottom: 8 });
-
-      Web({ src: PRIVACY_URL, controller: this.webCtrl })
-        .width('100%')
-        .layoutWeight(1);
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(themeBg(AppConfig.darkMode))
-    .padding(12);
-  }
-}
 
 // ===== 颜色常量（与原版一致）=====
 const COLOR_PRIMARY: string = '#3F51B5';
@@ -104,22 +75,36 @@ function themeText(dark: boolean): string { return dark ? '#e8e8e8' : '#000000';
 function themeSubText(dark: boolean): string { return dark ? '#9a9a9a' : '#666666'; }
 function themeDivider(dark: boolean): string { return dark ? '#3a3a3a' : '#dddddd'; }
 function themeRowAlt(dark: boolean): string { return dark ? '#262626' : '#f5f5f5'; }
-function themeTopBar(dark: boolean): string { return dark ? COLOR_PRIMARY_DARK : COLOR_PRIMARY; }
 
-/** 内容区背景：有自定义背景时半透明，否则纯色 */
+function formatDateFull(ts: number): string {
+  const d: Date = new Date(ts);
+  if (isNaN(d.getTime())) {
+    return '';
+  }
+  return d.getFullYear() + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' +
+    d.getDate().toString().padStart(2, '0') + ' ' +
+    d.getHours().toString().padStart(2, '0') + ':' +
+    d.getMinutes().toString().padStart(2, '0') + ':' +
+    d.getSeconds().toString().padStart(2, '0');
+}
+
+/** 内容区背景：有自定义背景时按 bgOpacity 联动半透明，否则纯色。
+ *  透明度滑块调大 → 背景图更清晰 → 遮罩 alpha 更小，真正透出图片。 */
 function contentBg(dark: boolean, hasBgImage: boolean): string {
   if (!hasBgImage) {
     return themeBg(dark);
   }
-  return dark ? 'rgba(30,30,30,0.84)' : 'rgba(255,255,255,0.84)';
+  const a: number = Math.max(0.12, (100 - AppConfig.bgOpacity) / 100);
+  return dark ? 'rgba(30,30,30,' + a + ')' : 'rgba(255,255,255,' + a + ')';
 }
 
-/** 按钮/行背景：有自定义背景时半透明 */
+/** 按钮/行背景：有自定义背景时按 bgOpacity 联动半透明 */
 function itemBg(dark: boolean, hasBgImage: boolean): string {
   if (!hasBgImage) {
     return themeBg(dark);
   }
-  return dark ? 'rgba(38,38,38,0.7)' : 'rgba(245,245,245,0.7)';
+  const a: number = Math.max(0.12, (100 - AppConfig.bgOpacity) / 100);
+  return dark ? 'rgba(38,38,38,' + a + ')' : 'rgba(245,245,245,' + a + ')';
 }
 
 // ===== 魔方类型（带分类）=====
@@ -487,6 +472,14 @@ function is333Puzzle(code: number): boolean {
   return code === 33 || code === 31 || code === 32 || code === 34 || code === 35;
 }
 
+/**
+ * 是否能打开求解器弹窗（审核问题1：把 solver/ 里已有但未接 UI 的求解器用起来）。
+ * 具体范围见 util/SolverRouting.ets —— 与求解弹窗的页签共用同一套判断。
+ */
+function hasSolverPuzzle(code: number): boolean {
+  return hasSolver(code);
+}
+
 /** 项目编码 -> DCTimer 打乱分类（与原版 MainActivity 分类一致） */
 function toDctimerCategory(code: number): number {
   switch (code) {
@@ -529,16 +522,17 @@ function initAlgorithmCache(ctx: common.UIAbilityContext): void {
     FileIO.mkdir(dir);
     AppGlobals.dataPath = dir;
     Tools.dataPath = dir;
-    Util.dataPath = dir;
+    setSbJointCacheDir(dir);
+    // 求解器表预热整体延迟且移出主线程：旧版启动即在主线程分段建表
+    // （含 pairJoint 6 段 BFS）并同步读 16MB 左/右桥联合表缓存，首页要
+    // ~3s 才渲染完。现改为首帧渲染后 1.2s 在 taskpool worker 里预热
+    // （读盘/建表/落盘都在 worker，主线程零阻塞）；用户提前点求解也无妨，
+    // 求解 worker 会按需读 solver_core.dat 或现建。
+    setTimeout((): void => { warmSolverCachesOffThread(); }, 1200);
     try {
       const rm: resourceManager.ResourceManager = ctx.resourceManager;
       copyRawTableFile(rm, 'twophase.dat', dir + 'twophase.dat').then((): void => {
         Tools.init();
-      });
-      copyRawTableFile(rm, 'center.dat', dir + 'center.dat').then((): void => {
-        copyRawTableFile(rm, 'edge.dat', dir + 'edge.dat').then((): void => {
-          Util.init();
-        });
       });
     } catch (e) {
       // rawfile 缺失时回退到运行时计算（慢）
@@ -575,6 +569,7 @@ struct SessionSelectDialog {
   controller: CustomDialogController;
   sessions: Session[] = [];
   currentIdx: number = 0;
+  bottomInset: number = 28;
   onSelect: (index: number) => void = (): void => {};
   onNew: () => void = (): void => {};
 
@@ -642,6 +637,8 @@ struct SessionSelectDialog {
         .onClick((): void => { this.controller.close(); });
     }
     .width('100%')
+    // 底部垫高安全区，避免「取消」按钮被手势条遮挡（审核问题2）
+    .padding({ bottom: this.bottomInset })
     .backgroundColor(themeBg(AppConfig.darkMode))
     .borderRadius({ topLeft: 12, topRight: 12 });
   }
@@ -676,13 +673,22 @@ struct ResultConfirmDialog {
         .textAlign(TextAlign.Center)
         .padding({ bottom: 4 });
 
-      Text(this.scramble)
-        .fontSize(13)
-        .fontColor(themeSubText(AppConfig.darkMode))
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .maxLines(2)
-        .padding({ left: 16, right: 16, bottom: 12 });
+      Scroll() {
+        Column() {
+          Text(this.scramble)
+            .fontSize(13)
+            .fontColor(themeSubText(AppConfig.darkMode))
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .maxLines(30)
+            .padding({ left: 16, right: 16 });
+        }
+        .width('100%');
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: 70 })
+      .scrollBar(BarState.Off)
+      .padding({ bottom: 12 });
 
       Row() {
         Button('确认')
@@ -748,89 +754,190 @@ struct ResultConfirmDialog {
   }
 }
 
-// ===== 成绩操作对话框 =====
+// ===== 成绩详情对话框（点开成绩列表项） =====
 @CustomDialog
-struct ResultActionDialog {
+struct ResultDetailDialog {
   controller: CustomDialogController;
   resultIndex: number = 0;
+  displayNo: number = 1;
   resultEntry: ResultEntry | null = null;
-  onViewDetail: (index: number) => void = (): void => {};
-  onPlusTwo: (index: number) => void = (): void => {};
-  onDNF: (index: number) => void = (): void => {};
-  onUndoPenalty: (index: number) => void = (): void => {};
+  puzzleCode: number = 33;
+  puzzleSize: number = 3;
+  schemeVersion: number = 0;
+  onPenaltyChange: (index: number, penalty: number) => void = (): void => {};
+  onNoteChange: (index: number, note: string) => void = (): void => {};
   onDelete: (index: number) => void = (): void => {};
-  onEditNote: (index: number) => void = (): void => {};
+  onCopyScramble: (scramble: string) => void = (): void => {};
+
+  @State selectedPenalty: number = 0;
+  @State noteText: string = '';
+
+  aboutToAppear(): void {
+    if (this.resultEntry) {
+      this.selectedPenalty = this.resultEntry.penalty;
+      this.noteText = this.resultEntry.note;
+    }
+  }
+
+  private displayTime(): string {
+    if (this.resultEntry === null) {
+      return 'DNF';
+    }
+    if (this.selectedPenalty === 2) {
+      return 'DNF';
+    }
+    return ResultEntry.formatMs(this.resultEntry.time + (this.selectedPenalty === 1 ? 2000 : 0),
+      AppConfig.timerAccuracy);
+  }
+
+  @Builder PenaltyOption(label: string, value: number) {
+    Row() {
+      Circle({ width: 20, height: 20 })
+        .fill(this.selectedPenalty === value ? COLOR_ACCENT : Color.Transparent)
+        .stroke(themeSubText(AppConfig.darkMode))
+        .strokeWidth(2);
+      Text(label)
+        .fontSize(15)
+        .fontColor(themeText(AppConfig.darkMode))
+        .margin({ left: 6 });
+    }
+    .padding(8)
+    .onClick((): void => {
+      this.selectedPenalty = value;
+      this.onPenaltyChange(this.resultIndex, value);
+    });
+  }
 
   build() {
     Column() {
-      // 当前状态摘要
-      if (this.resultEntry) {
-        Text(this.resultEntry.getDisplayTime(AppConfig.timerAccuracy))
-          .fontSize(36)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(themeText(AppConfig.darkMode))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .padding({ top: 16, bottom: 4 });
-        Text(this.resultEntry.scramble)
-          .fontSize(13)
-          .fontColor(themeSubText(AppConfig.darkMode))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .maxLines(2)
-          .padding({ left: 16, right: 16, bottom: 8 });
-      }
+      Scroll() {
+        Column() {
+          if (this.resultEntry) {
+            Text('#' + this.displayNo)
+              .fontSize(15)
+              .fontColor(themeSubText(AppConfig.darkMode))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .margin({ bottom: 2 });
 
-      Column() {
-        this.ActionButton('查看详情', (): void => {
-          this.onViewDetail(this.resultIndex);
-          this.controller.close();
-        });
-        this.ActionButton('+2', (): void => {
-          this.onPlusTwo(this.resultIndex);
-          this.controller.close();
-        });
-        this.ActionButton('DNF', (): void => {
-          this.onDNF(this.resultIndex);
-          this.controller.close();
-        });
-        this.ActionButton('取消惩罚', (): void => {
-          this.onUndoPenalty(this.resultIndex);
-          this.controller.close();
-        });
-        this.ActionButton('编辑备注', (): void => {
-          this.controller.close();
-          this.onEditNote(this.resultIndex);
-        });
-        this.ActionButton('删除', (): void => {
-          this.controller.close();
-          this.onDelete(this.resultIndex);
-        });
-      }
-      .width('100%');
+            Text(this.displayTime())
+              .fontSize(48)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(themeText(AppConfig.darkMode))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .margin({ bottom: 4 });
 
-      Button('取消')
-        .fontSize(16)
-        .fontColor(themeText(AppConfig.darkMode))
-        .backgroundColor(themeBg(AppConfig.darkMode))
+            Text(formatDateFull(this.resultEntry.date))
+              .fontSize(14)
+              .fontColor(themeSubText(AppConfig.darkMode))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .margin({ bottom: 12 });
+
+            Text(this.resultEntry.scramble)
+              .fontSize(16)
+              .fontColor(themeText(AppConfig.darkMode))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .margin({ bottom: 12 });
+
+            if (this.puzzleSize !== 0 && this.resultEntry.scramble.length > 0) {
+              Row() {
+                ScrambleImageView({
+                  scramble: this.resultEntry.scramble,
+                  puzzleSize: this.puzzleSize,
+                  puzzleCode: this.puzzleCode,
+                  schemeVersion: this.schemeVersion
+                });
+              }
+              .width('100%')
+              .height(220)
+              .justifyContent(FlexAlign.Center)
+              .margin({ bottom: 16 });
+            }
+
+            // 惩罚选择
+            Row() {
+              this.PenaltyOption('无惩罚', 0);
+              this.PenaltyOption('+2', 1);
+              this.PenaltyOption('DNF', 2);
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceEvenly)
+            .margin({ bottom: 16 });
+
+            // 备注输入
+            Row() {
+              AppIcon({
+                iconId: 'note',
+                color: themeSubText(AppConfig.darkMode),
+                iconSize: 22
+              });
+              TextInput({ text: this.noteText, placeholder: '备注' })
+                .layoutWeight(1)
+                .height(44)
+                .fontSize(15)
+                .fontColor(themeText(AppConfig.darkMode))
+                .placeholderColor(themeSubText(AppConfig.darkMode))
+                .caretColor(themeText(AppConfig.darkMode))
+                .backgroundColor(themeDivider(AppConfig.darkMode))
+                .borderRadius(8)
+                .margin({ left: 10 })
+                .onChange((value: string): void => {
+                  this.noteText = value;
+                });
+            }
+            .width('100%')
+            .margin({ bottom: 8 });
+          }
+        }
         .width('100%')
-        .height(48)
-        .margin({ top: 8 })
-        .onClick((): void => { this.controller.close(); });
-    }
-    .width('100%')
-    .backgroundColor(themeBg(AppConfig.darkMode))
-    .borderRadius({ topLeft: 12, topRight: 12 });
-  }
-
-  @Builder ActionButton(label: string, action: () => void) {
-    Text(label)
-      .fontSize(16)
-      .fontColor(label === '删除' ? '#ff4444' : themeText(AppConfig.darkMode))
+        .padding(20);
+      }
       .width('100%')
-      .textAlign(TextAlign.Center)
-      .padding({ top: 14, bottom: 14 })
-      .onClick((): void => { action(); });
+      .layoutWeight(1);
+
+      // 底部操作按钮
+      Row() {
+        Text('复制打乱')
+          .fontSize(15)
+          .fontColor(COLOR_ACCENT)
+          .padding(8)
+          .onClick((): void => {
+            if (this.resultEntry) {
+              this.onCopyScramble(this.resultEntry.scramble);
+            }
+          });
+
+        Text('删除')
+          .fontSize(15)
+          .fontColor('#ff4444')
+          .padding(8)
+          .onClick((): void => {
+            this.controller.close();
+            this.onDelete(this.resultIndex);
+          });
+
+        Text('确定')
+          .fontSize(15)
+          .fontColor(COLOR_ACCENT)
+          .padding(8)
+          .onClick((): void => {
+            if (this.resultEntry && this.noteText !== this.resultEntry.note) {
+              this.onNoteChange(this.resultIndex, this.noteText);
+            }
+            this.controller.close();
+          });
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, bottom: 20 })
+      .justifyContent(FlexAlign.SpaceBetween);
+    }
+    .width('90%')
+    .constraintSize({ maxHeight: '85%' })
+    .backgroundColor(themeBg(AppConfig.darkMode))
+    .borderRadius(16);
   }
 }
 
@@ -914,9 +1021,12 @@ struct Index {
   @State inspectionText: string = '';
   @State currentPuzzleIndex: number = 0;
   @State puzzleButtonText: string = '3x3';
-  @State phaseHint: string = '';
   // 主题与字号（响应式，切换时驱动界面刷新）
   @State isDark: boolean = false;
+  // 跟随系统：系统深色变化时自动刷新（由 EntryAbility 写入全局存储）
+  @StorageProp('dcSystemDark')
+  @Watch('onSystemDarkChange')
+  sysDark: boolean = true;
   @State timerFontSize: number = 72;
   @State scrambleFontSize: number = 16;
   // 成绩数据
@@ -933,16 +1043,43 @@ struct Index {
   @State maxIdx: number = -1;
   // 设置数据
   @State settingSections: SettingSection[] = [];
-  @State currentSettingSection: number = 0;
+  @State @Watch('onSettingSectionChange') currentSettingSection: number = 0;
+  // 点击顶部导航跳转期间，抑制 onScrollIndex 对高亮的改写，避免被底部反推抢走
+  private suppressScrollHighlight: boolean = false;
+  // 设置导航横向 Scroll 的控制器与标签宽度缓存
+  private navScroller: Scroller = new Scroller();
+  // 导航栏左右内边距；测量与布局共用此值，避免两边漂移
+  private navPad: number = 12;
+  // 各分区标签宽度（vp），中心位置由宽度累加推算（不依赖 onAreaChange 的 position）
+  private tabWidths: number[] = [];
+  @State navWidth: number = 0;
+  // 导航栏内容总宽（vp），用于计算最大可滚动偏移
+  @State navContentWidth: number = 0;
+  // 底部系统安全区高度（手势条/导航栏避让），主内容区据此留白
+  @State bottomSafeInset: number = MIN_BOTTOM_INSET_VP;
+  // 顶部状态栏高度，沉浸式布局下顶部栏需要自己垫高
+  @State topSafeInset: number = 0;
   // 背景主题
   @State bgImageUri: string = '';
   @State bgOpacity: number = 80;
+  // 背景图裁剪
+  @State showBgCrop: boolean = false;
+  @State bgCropSrcUri: string = '';
   // BLE 智能魔方
   @State bleConnected: boolean = false;
   @State bleDeviceName: string = '';
   @State bleStatusText: string = '未连接';
+  // 智能魔方 3D 同步状态
+  @State smartCubeConnected: boolean = false;
+  @State smartCubeFacelets: string = SmartCubeOrientation.SOLVED_FACELET;
   // 求解器
   @State showSolver: boolean = false;
+  // 打乱图配色编辑器（kind: 0=NxNxN 1=金字塔 2=斜转 3=五魔方）
+  @State showColorScheme: boolean = false;
+  @State schemeKind: number = 0;
+  // 配色变更版本号：bump 后驱动 ScrambleImageView 重绘（scheme 是静态表，
+  // @Prop scramble 不变时组件不会自行刷新）
+  @State schemeVersion: number = 0;
   // 魔方类型下拉
   @State showPuzzleDropdown: boolean = false;
   @State dropdownCategoryIdx: number = 0;
@@ -978,6 +1115,7 @@ struct Index {
     builder: SessionSelectDialog({
       sessions: [],
       currentIdx: 0,
+      bottomInset: this.bottomSafeInset,
       onSelect: (_index: number): void => {},
       onNew: (): void => {}
     }),
@@ -985,33 +1123,25 @@ struct Index {
     alignment: DialogAlignment.Bottom,
     customStyle: true
   });
-  private resultActionDialog: CustomDialogController = new CustomDialogController({
-    builder: ResultActionDialog({
+  private resultDetailDialog: CustomDialogController = new CustomDialogController({
+    builder: ResultDetailDialog({
       resultIndex: 0,
+      displayNo: 1,
       resultEntry: null,
-      onViewDetail: (_index: number): void => {},
-      onPlusTwo: (_index: number): void => {},
-      onDNF: (_index: number): void => {},
-      onUndoPenalty: (_index: number): void => {},
+      puzzleCode: 33,
+      puzzleSize: 3,
+      onPenaltyChange: (_index: number, _penalty: number): void => {},
+      onNoteChange: (_index: number, _note: string): void => {},
       onDelete: (_index: number): void => {},
-      onEditNote: (_index: number): void => {}
-    }),
-    autoCancel: true,
-    alignment: DialogAlignment.Bottom,
-    customStyle: true
-  });
-  private manualInputDialog: CustomDialogController = new CustomDialogController({
-    builder: ManualInputDialog({
-      onConfirm: (_timeStr: string): void => {}
+      onCopyScramble: (_scramble: string): void => {}
     }),
     autoCancel: true,
     alignment: DialogAlignment.Center,
     customStyle: true
   });
-  private noteEditDialog: CustomDialogController = new CustomDialogController({
-    builder: NoteEditDialog({
-      currentNote: '',
-      onSave: (_note: string): void => {}
+  private manualInputDialog: CustomDialogController = new CustomDialogController({
+    builder: ManualInputDialog({
+      onConfirm: (_timeStr: string): void => {}
     }),
     autoCancel: true,
     alignment: DialogAlignment.Center,
@@ -1032,8 +1162,7 @@ struct Index {
     builder: PrivacyDialog({
       mode: 0,
       onAgree: (): void => { this.onPrivacyAgree(); },
-      onExit: (): void => { this.exitApp(); },
-      onViewWeb: (): void => { this.openPrivacyWeb(); }
+      onExit: (): void => { this.exitApp(); }
     }),
     autoCancel: false,
     alignment: DialogAlignment.Center,
@@ -1043,15 +1172,8 @@ struct Index {
     builder: PrivacyDialog({
       mode: 1,
       onAgree: (): void => {},
-      onExit: (): void => {},
-      onViewWeb: (): void => { this.openPrivacyWeb(); }
+      onExit: (): void => {}
     }),
-    autoCancel: true,
-    alignment: DialogAlignment.Center,
-    customStyle: true
-  });
-  private privacyWebDialog: CustomDialogController = new CustomDialogController({
-    builder: PrivacyWebDialog({}),
     autoCancel: true,
     alignment: DialogAlignment.Center,
     customStyle: true
@@ -1059,6 +1181,7 @@ struct Index {
 
   aboutToAppear(): void {
     initAlgorithmCache(getContext(this) as common.UIAbilityContext);
+    this.loadBottomSafeInset();
     this.dct.setCallback((time: number, state: TimerState): void => {
       this.timerState = state;
       this.timerText = StringUtils.timeToString(time);
@@ -1083,7 +1206,6 @@ struct Index {
     });
 
     this.dct.setPhaseCallback((phaseIndex: number, phaseTime: number): void => {
-      this.phaseHint = '第' + (phaseIndex + 2) + '/' + AppConfig.multiPhase + '段';
       promptAction.showToast({
         message: '第' + (phaseIndex + 1) + '段: ' + StringUtils.timeToString(phaseTime),
         duration: 1500
@@ -1096,7 +1218,7 @@ struct Index {
       }
     });
 
-    // 同步读取背景配置，避免冷启动首帧先显示无背景的界面、稍后才加载背景图
+    // 同步读取背景/主题配置，避免冷启动首帧先显示默认界面、稍后才切换
     try {
       const sprefs: dataPreferences.Preferences =
         dataPreferences.getPreferencesSync(getContext(this), { name: 'dctimer_data' });
@@ -1104,18 +1226,22 @@ struct Index {
       const op: number = sprefs.getSync('bgOpacity', 80) as number;
       BackgroundManager.setImageUri(uri);
       BackgroundManager.setOpacity(op);
+      // 主题模式（无 themeMode 时从旧 darkMode 迁移）
+      const mt: number = sprefs.getSync('themeMode', -1) as number;
+      if (mt === -1) {
+        AppConfig.themeMode = (sprefs.getSync('darkMode', false) as boolean) ? 1 : 0;
+      } else {
+        AppConfig.themeMode = mt;
+      }
     } catch (e) {
       // 首次启动无配置文件时忽略，使用默认值
     }
     // 初始化背景设置
     this.bgImageUri = BackgroundManager.getImageUri();
     this.bgOpacity = BackgroundManager.getOpacity();
-
-    // 初始化 BLE 智能魔方
-    this.initBleCallbacks();
-    if (AppConfig.bleDeviceAddress.length > 0) {
-      this.bleDeviceName = AppConfig.bleDeviceName;
-    }
+    // 依据主题模式计算生效明暗，使首帧即为正确主题
+    this.refreshSystemDark();
+    this.applyEffectiveDark(false);
 
     this.initSettings();
     initScrambleItems();
@@ -1163,9 +1289,108 @@ struct Index {
     this.privacyViewDialog.open();
   }
 
-  /** 打开网页版隐私政策 */
-  openPrivacyWeb(): void {
-    this.privacyWebDialog.open();
+  /** 底部避让最小值（vp）：手势条避让区换算后可能小于 28vp，测试标准要求至少 28vp */
+  private static readonly MIN_BOTTOM_SAFE_VP: number = MIN_BOTTOM_INSET_VP;
+
+  /** 从全局存储读取顶部/底部安全区（沉浸式布局下由 EntryAbility 统一写入并实时更新）。
+   *  底部按 28vp 兜底，保证底栏控件距屏幕底边不小于 28vp（审核问题2 的硬指标）。 */
+  loadBottomSafeInset(): void {
+    this.refreshSafeInset();
+    // 双保险：EntryAbility 在窗口尺寸/导航方式变化时也会写 AppStorage，
+    // 这里再主动读一次窗口，防止首帧时 AppStorage 尚未写入。
+    window.getLastWindow(getContext(this)).then((win: window.Window): void => {
+      try {
+        const indicator: window.AvoidArea =
+          win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+        const sysBar: window.AvoidArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+        const bottomPx: number = Math.max(indicator.bottomRect.height, sysBar.bottomRect.height);
+        const topPx: number = Math.max(indicator.topRect.height, sysBar.topRect.height);
+        this.bottomSafeInset = Math.max(px2vp(bottomPx), Index.MIN_BOTTOM_SAFE_VP);
+        this.topSafeInset = px2vp(topPx);
+        win.on('avoidAreaChange', (data: window.AvoidAreaOptions) => {
+          if (data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR ||
+            data.type === window.AvoidAreaType.TYPE_SYSTEM) {
+            this.refreshSafeInset();
+          }
+        });
+      } catch (e) {
+        this.bottomSafeInset = Index.MIN_BOTTOM_SAFE_VP;
+      }
+    }).catch((): void => {
+      this.bottomSafeInset = Index.MIN_BOTTOM_SAFE_VP;
+    });
+  }
+
+  /** 从 AppStorage 同步安全区（EntryAbility 的 avoidAreaChange 已折算成 vp 写入） */
+  refreshSafeInset(): void {
+    const b: number | undefined = AppStorage.get<number>(BOTTOM_INSET_KEY);
+    const t: number | undefined = AppStorage.get<number>(TOP_INSET_KEY);
+    if (b !== undefined) {
+      this.bottomSafeInset = Math.max(b, Index.MIN_BOTTOM_SAFE_VP);
+    }
+    if (t !== undefined) {
+      this.topSafeInset = t;
+    }
+  }
+
+  // ===== 主题（浅色/深色/跟随系统）=====
+  /**
+   * 读取当前系统是否为深色。
+   * 权威来源 = AppStorage['dcSystemDark']（EntryAbility 的应用级环境回调实时写入，
+   * 前台/后台都准确）。getContext().config.colorMode 在 setColorMode(NOT_SET) 下
+   * 可能返回 -1 或滞后值，只作兜底，绝不能再覆盖正确值。
+   */
+  refreshSystemDark(): void {
+    const v: boolean | undefined = AppStorage.get<boolean>(SYSTEM_DARK_KEY);
+    if (v !== undefined) {
+      AppConfig.systemDark = v;
+      return;
+    }
+    try {
+      AppConfig.systemDark =
+        (getContext(this) as common.UIAbilityContext).config.colorMode ===
+        ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    } catch (e) {
+      // 读取失败时保留上一次值
+    }
+  }
+
+  /** 依据主题模式计算生效明暗并刷新界面 */
+  applyEffectiveDark(updateTimer: boolean): void {
+    if (AppConfig.themeMode === 2) {
+      this.refreshSystemDark();
+      AppConfig.darkMode = AppConfig.systemDark;
+    } else {
+      AppConfig.darkMode = AppConfig.themeMode === 1;
+    }
+    this.isDark = AppConfig.darkMode;
+    if (updateTimer && (this.timerState === TimerState.READY || this.timerState === TimerState.STOP)) {
+      this.timerColor = themeText(this.isDark);
+    }
+  }
+
+  /** 设置项当前主题描述 */
+  themeModeDesc(): string {
+    if (AppConfig.themeMode === 2) {
+      return '跟随系统';
+    }
+    return AppConfig.themeMode === 1 ? '深色' : '浅色';
+  }
+
+  /** 页面每次显示时若处于“跟随系统”，校正到当前系统主题 */
+  onPageShow(): void {
+    if (AppConfig.themeMode === 2) {
+      this.refreshSystemDark();
+      this.applyEffectiveDark(true);
+    }
+  }
+
+  /** 系统深色模式变化（跟随系统时）自动刷新界面 */
+  onSystemDarkChange(): void {
+    if (AppConfig.themeMode === 2) {
+      // AppStorage 刚由环境回调写入权威值，refreshSystemDark 直接读取它
+      this.applyEffectiveDark(true);
+    }
   }
 
   /** 初始化数据库并加载当前训练组成绩 */
@@ -1233,7 +1458,15 @@ struct Index {
     AppConfig.showStats = prefs.getSync('showStats', true) as boolean;
     AppConfig.showScrambleImage = prefs.getSync('showScrambleImage', true) as boolean;
     AppConfig.scrambleFontSize = prefs.getSync('scrambleFontSize', 16) as number;
-    AppConfig.darkMode = prefs.getSync('darkMode', false) as boolean;
+    // 主题模式（无 themeMode 时从旧 darkMode 迁移）
+    const thm: number = prefs.getSync('themeMode', -1) as number;
+    if (thm === -1) {
+      AppConfig.themeMode = (prefs.getSync('darkMode', false) as boolean) ? 1 : 0;
+    } else {
+      AppConfig.themeMode = thm;
+    }
+    this.refreshSystemDark();
+    this.applyEffectiveDark(true);
     AppConfig.bgImageUri = prefs.getSync('bgImageUri', '') as string;
     AppConfig.bgOpacity = prefs.getSync('bgOpacity', 80) as number;
     AppConfig.privacyAgreed = prefs.getSync('privacyAgreed', false) as boolean;
@@ -1248,6 +1481,7 @@ struct Index {
     AppConfig.avg1Len = prefs.getSync('avg1Len', 5) as number;
     AppConfig.avg2Type = prefs.getSync('avg2Type', 0) as number;
     AppConfig.avg2Len = prefs.getSync('avg2Len', 12) as number;
+    this.loadColorSchemes(prefs);
     let swipeStr: string = prefs.getSync('swipeType', '1,2,3,5') as string;
     let swipeParts: string[] = swipeStr.split(',');
     for (let i: number = 0; i < 4 && i < swipeParts.length; i++) {
@@ -1320,6 +1554,7 @@ struct Index {
     prefs.putSync('showScrambleImage', AppConfig.showScrambleImage);
     prefs.putSync('scrambleFontSize', AppConfig.scrambleFontSize);
     prefs.putSync('darkMode', AppConfig.darkMode);
+    prefs.putSync('themeMode', AppConfig.themeMode);
     prefs.putSync('bgImageUri', AppConfig.bgImageUri);
     prefs.putSync('bgOpacity', AppConfig.bgOpacity);
     prefs.putSync('privacyAgreed', AppConfig.privacyAgreed);
@@ -1333,6 +1568,10 @@ struct Index {
     prefs.putSync('avg2Type', AppConfig.avg2Type);
     prefs.putSync('avg2Len', AppConfig.avg2Len);
     prefs.putSync('swipeType', AppConfig.swipeType.join(','));
+    prefs.putSync('schemeN', DctScrambler.schemeN.join(','));
+    prefs.putSync('schemeP', DctScrambler.schemeP.join(','));
+    prefs.putSync('schemeW', DctScrambler.schemeW.join(','));
+    prefs.putSync('schemeM', DctScrambler.schemeM.join(','));
     prefs.putSync('currentSessionIndex', this.currentSessionIndex);
 
     let sessionObjs: Record<string, Object>[] = [];
@@ -1378,7 +1617,7 @@ struct Index {
     // Preferences 中索引 0 为最新成绩，逆序插入以保持时间顺序
     for (let i: number = arr.length - 1; i >= 0; i--) {
       const e: ResultEntry = ResultEntry.fromJSON(arr[i] as Record<string, Object>);
-      await this.result.insert(e.time, e.penalty, e.scramble, false, null, null);
+      await this.result.insert(e.time, e.penalty, e.scramble, false, null, null, 0);
       if (e.note.length > 0) {
         await this.result.updateNote(this.result.getLength() - 1, e.note);
       }
@@ -1402,6 +1641,7 @@ struct Index {
       e.scramble = this.result.getString(i, 4);
       e.date = ResultEntry.parseDate(this.result.getString(i, 5));
       e.note = this.result.getString(i, 6);
+      e.puzzle = this.result.getPuzzle(i);
       if (AppConfig.multiPhase > 0) {
         for (let j: number = 0; j < 6; j++) {
           const p: number = this.result.getMulTime(j, i);
@@ -1475,6 +1715,7 @@ struct Index {
       builder: SessionSelectDialog({
         sessions: this.sessions,
         currentIdx: this.currentSessionIndex,
+        bottomInset: this.bottomSafeInset,
         onSelect: (index: number): void => { this.switchSession(index); },
         onNew: (): void => { this.createNewSession(); }
       }),
@@ -1521,6 +1762,8 @@ struct Index {
   }
 
   // ===== 打乱生成 =====
+  // 四阶（四速/四盲）已改用与五阶同思路的随机步生成（scramble444，瞬时完成）；
+  // threephase random-state 三阶段在 ArkTS 上需数十秒，已弃用（详见 HANDOVER 7.6-19）。
   generateScramble(): void {
     const puzzleCode: number = flatPuzzleCode(this.currentPuzzleIndex);
     const category: number = toDctimerCategory(puzzleCode);
@@ -1596,7 +1839,6 @@ struct Index {
       this.dct.count();
       if (this.dct.state === TimerState.STOP) {
         this.vibrateOnStop();
-        this.phaseHint = '';
         let penalty: number = this.dct.isDNF ? 2 : (this.dct.penaltyTime > 0 ? 1 : 0);
         this.saveResult(penalty);
       }
@@ -1610,10 +1852,19 @@ struct Index {
           this.bleConnected = true;
           this.bleDeviceName = name;
           this.bleStatusText = '已连接: ' + name;
+          this.smartCubeConnected = true;
+          this.smartCubeFacelets = SmartCubeOrientation.SOLVED_FACELET;
           AppConfig.bleDeviceAddress = address;
           AppConfig.bleDeviceName = name;
           this.saveToPreferences();
           this.initSettings();
+        },
+        onCubeMove: (move: CubeMove): void => {
+          if (!this.smartCubeConnected) {
+            return;
+          }
+          this.smartCubeFacelets = SmartCubeOrientation.rotateMoveFacelets(
+            this.smartCubeFacelets, move.face, move.direction);
         }
       }),
       autoCancel: true,
@@ -1627,6 +1878,8 @@ struct Index {
     this.bleConnected = false;
     this.bleDeviceName = '';
     this.bleStatusText = '未连接';
+    this.smartCubeConnected = false;
+    this.smartCubeFacelets = SmartCubeOrientation.SOLVED_FACELET;
     AppConfig.bleDeviceAddress = '';
     AppConfig.bleDeviceName = '';
     this.saveToPreferences();
@@ -1643,19 +1896,18 @@ struct Index {
   }
 
   // ===== 背景图片选择 =====
-  /** 把选中的图片复制到应用沙箱，返回沙箱路径（相册 URI 授权在退出应用后失效） */
-  copyBgImageToSandbox(uri: string): string {
+  /** 删除沙箱内旧背景文件（仅限应用 filesDir 下的 bg_image 前缀文件） */
+  deleteBgFile(uri: string): void {
+    if (uri.length === 0) {
+      return;
+    }
     try {
-      const srcFile: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
-      const destPath: string = getContext(this).filesDir + '/bg_image';
-      const dstFile: fileIo.File = fileIo.openSync(destPath,
-        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-      fileIo.copyFileSync(srcFile.fd, dstFile.fd);
-      fileIo.closeSync(srcFile);
-      fileIo.closeSync(dstFile);
-      return 'file://' + destPath;
+      const prefix: string = 'file://' + getContext(this).filesDir + '/bg_image';
+      if (uri.startsWith(prefix)) {
+        fileIo.unlinkSync(uri.substring('file://'.length));
+      }
     } catch (err) {
-      return '';
+      // 文件不存在时忽略
     }
   }
 
@@ -1668,31 +1920,32 @@ struct Index {
         maxSelectNumber: 1
       });
       if (result && result.photoUris && result.photoUris.length > 0) {
-        const localPath: string = this.copyBgImageToSandbox(result.photoUris[0]);
-        if (localPath.length === 0) {
-          promptAction.showToast({ message: '背景图片读取失败', duration: 2000 });
-          return;
-        }
-        this.bgImageUri = localPath;
-        BackgroundManager.setImageUri(localPath);
-        AppConfig.bgImageUri = localPath;
-        this.initSettings();
-        this.saveToPreferences();
+        // 打开裁剪对话框：拖动定位 + 双指缩放，确认后生效
+        this.bgCropSrcUri = result.photoUris[0];
+        this.showBgCrop = true;
       }
     } catch (err) {
       // 用户取消
     }
   }
 
+  /** 裁剪确认：使用唯一文件名保存，URI 变化驱动界面立即刷新 */
+  onBgCropConfirm(path: string): void {
+    this.deleteBgFile(AppConfig.bgImageUri);
+    const localPath: string = 'file://' + path;
+    this.bgImageUri = localPath;
+    BackgroundManager.setImageUri(localPath);
+    AppConfig.bgImageUri = localPath;
+    this.showBgCrop = false;
+    this.initSettings();
+    this.saveToPreferences();
+  }
+
   clearBackgroundImage(): void {
+    this.deleteBgFile(this.bgImageUri);
     this.bgImageUri = '';
     BackgroundManager.clearImage();
     AppConfig.bgImageUri = '';
-    try {
-      fileIo.unlinkSync(getContext(this).filesDir + '/bg_image');
-    } catch (err) {
-      // 文件不存在时忽略
-    }
     this.saveToPreferences();
   }
 
@@ -1717,7 +1970,6 @@ struct Index {
         this.stoppedOnThisTouch = true;
         this.timerColor = themeText(this.isDark);
         this.timerState = TimerState.STOP;
-        this.phaseHint = '';
         this.showResultConfirmDialog();
       }
     } else if (this.timerState === TimerState.READY) {
@@ -1782,9 +2034,6 @@ struct Index {
     this.timerColor = themeText(this.isDark);
     this.inspectionText = '';
     this.resultPenalty = -1;
-    if (AppConfig.multiPhase > 0) {
-      this.phaseHint = '第1/' + AppConfig.multiPhase + '段';
-    }
     this.vibrateOnStart();
   }
 
@@ -1879,7 +2128,8 @@ struct Index {
     if (this.result === null) {
       return;
     }
-    this.result.insert(timeMs, 0, this.scramble, AppConfig.multiPhase > 0, null, null).then((): void => {
+    this.result.insert(timeMs, 0, this.scramble, AppConfig.multiPhase > 0, null, null,
+      flatPuzzleCode(this.currentPuzzleIndex)).then((): void => {
       this.refreshResultsDisplay();
       this.updateStats();
       this.dct.reset();
@@ -1902,7 +2152,8 @@ struct Index {
         Result.multemp[i + 1] = Result.multemp[i] + this.dct.phaseTimes[i];
       }
     }
-    this.result.insert(this.dct.time, penalty, this.scramble, AppConfig.multiPhase > 0, null, null).then((): void => {
+    this.result.insert(this.dct.time, penalty, this.scramble, AppConfig.multiPhase > 0, null, null,
+      flatPuzzleCode(this.currentPuzzleIndex)).then((): void => {
       this.refreshResultsDisplay();
       this.updateStats();
     });
@@ -1916,7 +2167,6 @@ struct Index {
       this.timerText = StringUtils.timeToString(this.dct.time);
     }
     this.timerColor = themeText(this.isDark);
-    this.phaseHint = '';
     this.dct.reset();
     this.timerState = TimerState.READY;
     this.generateScramble();
@@ -1927,7 +2177,6 @@ struct Index {
     this.timerState = TimerState.READY;
     this.timerText = '0.00';
     this.timerColor = themeText(this.isDark);
-    this.phaseHint = '';
     this.resultPenalty = -1;
   }
 
@@ -1962,52 +2211,50 @@ struct Index {
     if (realIdx < 0 || realIdx >= this.results.length) {
       return;
     }
-    this.resultActionDialog = new CustomDialogController({
-      builder: ResultActionDialog({
+    // 使用成绩自身记录的项目绘制打乱图；旧数据无记录(0)时回退到当前项目
+    const entryPuzzle: number = this.results[displayIndex].puzzle;
+    const code: number = entryPuzzle > 0 ? entryPuzzle : flatPuzzleCode(this.currentPuzzleIndex);
+    this.resultDetailDialog = new CustomDialogController({
+      builder: ResultDetailDialog({
         resultIndex: realIdx,
+        displayNo: displayIndex + 1,
         resultEntry: this.results[displayIndex],
-        onViewDetail: (index: number): void => { this.onViewResultDetail(index); },
-        onPlusTwo: (index: number): void => { this.onResultPlusTwo(index); },
-        onDNF: (index: number): void => { this.onResultDNF(index); },
-        onUndoPenalty: (index: number): void => { this.onResultUndoPenalty(index); },
+        puzzleCode: code,
+        puzzleSize: puzzleImageSize(code),
+        schemeVersion: this.schemeVersion,
+        onPenaltyChange: (index: number, penalty: number): void => {
+          if (this.result === null) {
+            return;
+          }
+          this.result.updatePenalty(index, penalty).then((): void => {
+            this.refreshResultsDisplay();
+            this.updateStats();
+          });
+        },
+        onNoteChange: (index: number, note: string): void => {
+          if (this.result === null) {
+            return;
+          }
+          this.result.updateNote(index, note).then((): void => {
+            this.refreshResultsDisplay();
+          });
+        },
         onDelete: (index: number): void => { this.onResultDelete(index); },
-        onEditNote: (index: number): void => { this.onEditResultNote(index); }
+        onCopyScramble: (scramble: string): void => { this.copyScrambleToClipboard(scramble); }
       }),
       autoCancel: true,
-      alignment: DialogAlignment.Bottom,
+      alignment: DialogAlignment.Center,
       customStyle: true
     });
-    this.resultActionDialog.open();
+    this.resultDetailDialog.open();
   }
 
-  onViewResultDetail(index: number): void {
-    if (this.result === null) {
-      return;
-    }
-    let detailMsg: string = '时间: ' + this.result.getTimeAt(index, true) +
-      '\n打乱: ' + this.result.getString(index, 4) +
-      '\n日期: ' + this.result.getString(index, 5);
-    const note: string = this.result.getString(index, 6);
-    if (note.length > 0) {
-      detailMsg += '\n备注: ' + note;
-    }
-    if (AppConfig.multiPhase > 0) {
-      const phaseStrs: string[] = [];
-      for (let i: number = 0; i < 6; i++) {
-        const p: number = this.result.getMulTime(i, index);
-        if (p > 0) {
-          phaseStrs.push(StringUtils.timeToString(p));
-        }
-      }
-      if (phaseStrs.length > 1) {
-        detailMsg += '\n分段: ' + phaseStrs.join(' / ');
-      }
-    }
-    AlertDialog.show({
-      title: '成绩详情',
-      message: detailMsg,
-      confirm: { value: '确定', action: (): void => {} },
-      alignment: DialogAlignment.Center
+  copyScrambleToClipboard(scramble: string): void {
+    const pb: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
+    pb.setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, scramble)).then((): void => {
+      promptAction.showToast({ message: '已复制打乱', duration: 1500 });
+    }).catch((): void => {
+      promptAction.showToast({ message: '复制失败', duration: 1500 });
     });
   }
 
@@ -2020,28 +2267,6 @@ struct Index {
       this.refreshResultsDisplay();
       this.updateStats();
     });
-  }
-
-  onEditResultNote(index: number): void {
-    if (this.result === null) {
-      return;
-    }
-    this.noteEditDialog = new CustomDialogController({
-      builder: NoteEditDialog({
-        currentNote: this.result.getString(index, 6),
-        onSave: (note: string): void => {
-          if (this.result !== null) {
-            this.result.updateNote(index, note).then((): void => {
-              this.refreshResultsDisplay();
-            });
-          }
-        }
-      }),
-      autoCancel: true,
-      alignment: DialogAlignment.Center,
-      customStyle: true
-    });
-    this.noteEditDialog.open();
   }
 
   showExportDialog(): void {
@@ -2168,12 +2393,20 @@ struct Index {
         ]
       },
       {
+        title: '配色', items: [
+          { id: 81, title: 'NxNxN 魔方', detail: '打乱图配色', type: 0, value: false },
+          { id: 82, title: '金字塔', detail: '打乱图配色', type: 0, value: false },
+          { id: 83, title: '斜转', detail: '打乱图配色', type: 0, value: false },
+          { id: 84, title: '五魔方', detail: '打乱图配色', type: 0, value: false }
+        ]
+      },
+      {
         title: '界面', items: [
           { id: 41, title: '计时器字体', detail: AppConfig.timerFont === 0 ? 'LCD 数码管' : '系统字体', type: 0, value: false },
           { id: 42, title: '计时器大小', detail: AppConfig.fontSize + 'sp', type: 0, value: false },
           { id: 43, title: '选择背景图片', detail: AppConfig.bgImageUri.length > 0 ? '已设置' : '未设置', type: 0, value: false },
           { id: 44, title: '背景透明度', detail: AppConfig.bgOpacity + '%', type: 2, value: false },
-          { id: 45, title: '深色模式', detail: '', type: 1, value: AppConfig.darkMode }
+          { id: 45, title: '深色模式', detail: this.themeModeDesc(), type: 0, value: false }
         ]
       },
       {
@@ -2187,8 +2420,8 @@ struct Index {
       {
         title: '硬件', items: [
           { id: 61, title: '屏幕常亮', detail: '', type: 1, value: AppConfig.keepScreenOn },
-          { id: 62, title: '触感反馈', detail: this.getVibrateDesc(), type: 0, value: false },
-          { id: 63, title: '智能魔方', detail: AppConfig.bleDeviceName.length > 0 ? ('已连接: ' + AppConfig.bleDeviceName) : '未连接', type: 0, value: false }
+          { id: 62, title: '触感反馈', detail: this.getVibrateDesc(), type: 0, value: false }
+          // 智能魔方(id=63)已从设置中移除，保留代码后续再接入
         ]
       },
       {
@@ -2202,6 +2435,51 @@ struct Index {
         ]
       }
     ];
+  }
+
+  // 从 Preferences 恢复打乱图配色（逗号分隔 ARGB，长度不符/为空则保留默认）
+  loadColorSchemes(prefs: dataPreferences.Preferences): void {
+    const apply = (key: string, arr: number[]): void => {
+      const raw: string = prefs.getSync(key, '') as string;
+      if (raw.length === 0) {
+        return;
+      }
+      const parts: string[] = raw.split(',');
+      for (let i = 0; i < arr.length && i < parts.length; i++) {
+        const v: number = parseInt(parts[i]);
+        if (!isNaN(v)) {
+          arr[i] = v;
+        }
+      }
+    };
+    apply('schemeN', DctScrambler.schemeN);
+    apply('schemeP', DctScrambler.schemeP);
+    apply('schemeW', DctScrambler.schemeW);
+    apply('schemeM', DctScrambler.schemeM);
+  }
+
+  // 配色编辑器确定回调：写回 Scrambler 静态配色表（打乱图立即生效），
+  // bump schemeVersion 驱动所有 ScrambleImageView 重绘，并持久化。
+  onSchemeConfirm(kind: number, colors: number[]): void {
+    if (kind === 0) {
+      for (let i = 0; i < 6 && i < colors.length; i++) {
+        DctScrambler.schemeN[i] = colors[i];
+      }
+    } else if (kind === 1) {
+      for (let i = 0; i < 4 && i < colors.length; i++) {
+        DctScrambler.schemeP[i] = colors[i];
+      }
+    } else if (kind === 2) {
+      for (let i = 0; i < 6 && i < colors.length; i++) {
+        DctScrambler.schemeW[i] = colors[i];
+      }
+    } else {
+      for (let i = 0; i < 12 && i < colors.length; i++) {
+        DctScrambler.schemeM[i] = colors[i];
+      }
+    }
+    this.schemeVersion++;
+    this.saveToPreferences();
   }
 
   getEnterTimeDesc(): string {
@@ -2236,13 +2514,6 @@ struct Index {
       case 2: AppConfig.inspectionAlert = value; break;
       case 8: AppConfig.showStats = value; break;
       case 22: AppConfig.showScrambleImage = value; break;
-      case 45:
-        AppConfig.darkMode = value;
-        this.isDark = value;
-        if (this.timerState === TimerState.READY || this.timerState === TimerState.STOP) {
-          this.timerColor = themeText(this.isDark);
-        }
-        break;
       case 61:
         AppConfig.keepScreenOn = value;
         this.applyKeepScreenOn();
@@ -2331,16 +2602,20 @@ struct Index {
       case 43:
         this.pickBackgroundImage(); // 异步
         return; // pickBG 自己会调 initSettings
-      case 63:
-        if (AppConfig.bleDeviceAddress.length > 0) {
-          this.disconnectBle();
-        } else {
-          this.openBleScanner();
-        }
-        return; // BLE dialog 自己处理
       case 71:
         AppConfig.defaultCrossBottom = (AppConfig.defaultCrossBottom + 1) % 6;
         break;
+      case 45:
+        AppConfig.themeMode = (AppConfig.themeMode + 1) % 3;
+        this.applyEffectiveDark(true);
+        break;
+      case 81:
+      case 82:
+      case 83:
+      case 84:
+        this.schemeKind = id - 81;
+        this.showColorScheme = true;
+        return; // 配色编辑器自己管理（确定时才持久化）
       case 50:
         this.openPrivacyPolicy();
         return; // 隐私政策对话框自己管理
@@ -2410,13 +2685,14 @@ struct Index {
   // ===== 主界面构建 =====
   build() {
     Stack() {
-      // 背景图层
+      // 背景图层 — 沉浸式下铺满整个屏幕（含状态栏与手势条区域）
       if (this.bgImageUri.length > 0) {
         Image(this.bgImageUri)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
-          .opacity(this.bgOpacity / 100);
+          .opacity(this.bgOpacity / 100)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
       }
 
       // 主内容
@@ -2424,26 +2700,32 @@ struct Index {
         // 顶部 TabBar — 计时运行时隐藏
         if (this.timerState !== TimerState.RUNNING) {
           Row() {
-            TabButton({ label: '计时器', selected: this.currentTab === 0, onTabClick: (): void => { this.currentTab = 0; } })
-            TabButton({ label: '成绩', selected: this.currentTab === 1, onTabClick: (): void => { this.currentTab = 1; } })
-            TabButton({ label: '设置', selected: this.currentTab === 2, onTabClick: (): void => { this.currentTab = 2; } })
+            TabButton({ iconId: 'stopwatch', selected: this.currentTab === 0, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 0; } })
+            TabButton({ iconId: 'train', selected: this.currentTab === 1, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 1; } })
+            TabButton({ iconId: 'list', selected: this.currentTab === 2, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 2; } })
+            TabButton({ iconId: 'gear', selected: this.currentTab === 3, isDark: this.isDark, onTabClick: (): void => { this.currentTab = 3; } })
           }
           .width('100%')
           .height(48)
-          .backgroundColor(themeTopBar(this.isDark));
+          .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0));
         }
 
         // 内容区域
         if (this.currentTab === 0) {
           this.TimerTab()
         } else if (this.currentTab === 1) {
+          TrainingView({ isDark: this.isDark })
+        } else if (this.currentTab === 2) {
           this.ResultTab()
         } else {
           this.SettingsTab()
         }
       }
       .width('100%')
-      .height('100%');
+      .height('100%')
+      // 沉浸式布局：顶部避开状态栏、底部避开手势条/导航栏。
+      // 底部按 28vp 兜底，保证底栏控件距屏幕底边不小于 28vp（审核问题2）。
+      .padding({ top: this.topSafeInset, bottom: this.bottomSafeInset });
 
       // 求解器半屏弹窗
       if (this.showSolver) {
@@ -2456,7 +2738,7 @@ struct Index {
         .onClick((): void => { this.closeSolver(); });
         Column() {
           Row() {
-            Text('十字求解器')
+            Text('魔方求解器')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.isDark ? '#e8e8e8' : '#000000')
@@ -2468,22 +2750,49 @@ struct Index {
               .onClick((): void => { this.closeSolver(); });
           }
           .width('100%')
-          .margin({ bottom: 12 });
+          .margin({ bottom: 8 });
 
-          // 使用求解器组件
-          CrossSolverView({
+          // 求解器（三阶：十字/CFOP/桥式/ZZ/Petrus；二阶/金字塔/SQ1 各自页签）：
+          // 填满弹窗剩余高度，组件内部按该高度自适应滚动
+          MethodSolverView({
             scramble: this.scramble,
-            isDark: this.isDark
-          });
+            isDark: this.isDark,
+            puzzleCode: flatPuzzleCode(this.currentPuzzleIndex)
+          })
+            .layoutWeight(1);
         }
+        // 弹窗整体限高 80%，内部组件按剩余高度滚动；此前弹窗随内容无限增高，
+        // 超出屏幕的底部（完整解法公式）被直接裁掉，导致"公式显示不全"。
         .width('100%')
+        .height('80%')
         .backgroundColor(this.isDark ? '#1e1e1e' : '#ffffff')
         .borderRadius({ topLeft: 16, topRight: 16 })
-        .padding(20);
+        // 底部垫高安全区，避免弹窗内容被手势条遮挡（审核问题2）
+        .padding({ left: 20, right: 20, top: 20, bottom: 20 + this.bottomSafeInset });
+      }
+
+      // 背景图裁剪层（全屏覆盖）
+      if (this.showBgCrop) {
+        BgCropDialog({
+          srcUri: this.bgCropSrcUri,
+          isDark: this.isDark,
+          onConfirm: (path: string): void => { this.onBgCropConfirm(path); },
+          onCancel: (): void => { this.showBgCrop = false; }
+        })
+      }
+      if (this.showColorScheme) {
+        ColorSchemeEditor({
+          kind: this.schemeKind,
+          isDark: this.isDark,
+          editing: $showColorScheme,
+          bottomInset: this.bottomSafeInset,
+          onConfirm: (kind: number, colors: number[]): void => { this.onSchemeConfirm(kind, colors); }
+        })
       }
     }
     .width('100%')
-    .height('100%');
+    .height('100%')
+    .backgroundColor(themeBg(this.isDark));
   }
 
   // ===== 计时器页面 =====
@@ -2493,8 +2802,7 @@ struct Index {
         // 顶部魔方类型下拉栏 — 计时运行时隐藏
         if (this.timerState !== TimerState.RUNNING) {
           Row() {
-            Text('🧊')
-              .fontSize(16)
+            AppIcon({ iconId: 'cube', color: themeSubText(this.isDark), iconSize: 18 })
               .margin({ right: 6 });
             Text(PUZZLE_CATEGORIES[this.currentPuzzleCategoryIdx()].name + ' · ' + this.puzzleButtonText)
               .fontSize(14)
@@ -2514,17 +2822,25 @@ struct Index {
           .onClick((): void => { this.togglePuzzleDropdown(); });
         }
 
-        // 打乱公式 — 计时运行时隐藏
+        // 打乱公式 — 计时运行时隐藏；公式较长（如多盲）时区域内可滚动查看
         if (this.timerState !== TimerState.RUNNING) {
-          Text(this.scramble)
-            .fontSize(this.scrambleFontSize)
-            .fontColor(themeSubText(this.isDark))
-            .maxLines(3)
-            .textAlign(TextAlign.Center)
-            .lineHeight(this.scrambleFontSize * 1.3)
-            .padding({ top: 24, left: 10, right: 10, bottom: 12 })
-            .width('100%')
-            .onClick((): void => { this.generateScramble(); });
+          Scroll() {
+            Column() {
+              Text(this.scramble)
+                .fontSize(this.scrambleFontSize)
+                .fontColor(themeSubText(this.isDark))
+                .maxLines(30)
+                .textAlign(TextAlign.Center)
+                .lineHeight(this.scrambleFontSize * 1.3)
+                .width('100%')
+                .onClick((): void => { this.generateScramble(); });
+            }
+            .width('100%');
+          }
+          .width('100%')
+          .constraintSize({ maxHeight: 110 })
+          .scrollBar(BarState.Off)
+          .padding({ top: 24, left: 10, right: 10, bottom: 12 });
         }
 
         // 计时器大字（LCD 数码管或系统字体）
@@ -2568,12 +2884,6 @@ struct Index {
               .fontColor('#f44336')
               .margin({ top: 4 });
           }
-          if (this.phaseHint.length > 0) {
-            Text(this.phaseHint)
-              .fontSize(15)
-              .fontColor(themeSubText(this.isDark))
-              .margin({ top: 6 });
-          }
           if (this.timerState === TimerState.STOP) {
             Text('等待确认成绩…')
               .fontSize(12)
@@ -2601,107 +2911,122 @@ struct Index {
         if (this.timerState !== TimerState.RUNNING) {
           if (AppConfig.showStats) {
             Text(this.statText)
-              .fontSize(15)
+              .fontSize(14)
               .fontColor(themeSubText(this.isDark))
               .textAlign(TextAlign.Start)
-              .lineHeight(21)
-              .width('100%')
+              .lineHeight(20)
+              .width('48%')
+              .alignSelf(ItemAlign.Start)
               .padding({ left: 10, bottom: 4 });
           }
 
           Row() {
-            Button(this.bleConnected ? '🔗 ' + this.bleDeviceName : '📡 连接魔方')
-              .fontSize(11)
-              .fontColor(this.bleConnected ? '#00cc00' : themeSubText(this.isDark))
+            // 求解按钮对三阶与二阶/金字塔/SQ1 都显示（审核问题1：丰富使用场景）；
+            // 具体页签由 MethodSolverView 按 puzzleCode 决定。
+            if (hasSolverPuzzle(flatPuzzleCode(this.currentPuzzleIndex))) {
+              Button() {
+                Row({ space: 4 }) {
+                  AppIcon({ iconId: 'wrench', color: themeSubText(this.isDark), iconSize: 15 });
+                  Text('求解')
+                    .fontSize(11)
+                    .fontColor(themeSubText(this.isDark));
+                }
+              }
+              .fontColor(themeSubText(this.isDark))
               .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
               .border({ width: 1, color: themeDivider(this.isDark), radius: 6 })
               .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .onClick((): void => { this.openBleScanner(); });
-
-            if (is333Puzzle(flatPuzzleCode(this.currentPuzzleIndex))) {
-              Button('🔧 十字求解')
-                .fontSize(11)
-                .fontColor(themeSubText(this.isDark))
-                .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
-                .border({ width: 1, color: themeDivider(this.isDark), radius: 6 })
-                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .margin({ left: 8 })
-                .onClick((): void => { this.openCrossSolver(); });
+              .margin({ left: 8 })
+              .onClick((): void => { this.openCrossSolver(); });
             }
           }
-          .width('100%')
+          .width('48%')
+          .alignSelf(ItemAlign.Start)
           .justifyContent(FlexAlign.Center)
-          .padding({ left: 10, right: 10, bottom: 8 });
+          .padding({ left: 10, right: 4, bottom: 8 });
         }
       }
       .width('100%')
       .height('100%')
       .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0))
 
-      // 右下角打乱状态图 — 计时运行时隐藏
-      if (this.timerState !== TimerState.RUNNING &&
-        AppConfig.showScrambleImage &&
-        puzzleImageSize(flatPuzzleCode(this.currentPuzzleIndex)) !== 0) {
-        ScrambleImageView({
-          scramble: this.scramble,
-          puzzleSize: puzzleImageSize(flatPuzzleCode(this.currentPuzzleIndex)),
-          puzzleCode: flatPuzzleCode(this.currentPuzzleIndex)
-        })
-          .width(152)
-          .height(114)
-          .margin({ right: 6, bottom: 92 });
+      // 右下角打乱图（智能魔方 3D 同步已移除，保留代码后续再接）
+      if (this.timerState !== TimerState.RUNNING && AppConfig.showScrambleImage) {
+        if (puzzleImageSize(flatPuzzleCode(this.currentPuzzleIndex)) !== 0) {
+          ScrambleImageView({
+            scramble: this.scramble,
+            puzzleSize: puzzleImageSize(flatPuzzleCode(this.currentPuzzleIndex)),
+            puzzleCode: flatPuzzleCode(this.currentPuzzleIndex),
+            schemeVersion: this.schemeVersion
+          })
+            .width('58%')
+            .aspectRatio(1.176)
+            .constraintSize({ maxHeight: '34%' })
+            .margin({ right: 2, bottom: 0 });
+        }
       }
 
       // 下拉面板（悬浮覆盖，不挤压其他UI）
       if (this.showPuzzleDropdown && this.timerState !== TimerState.RUNNING) {
         Column() {
           Row() {
-            Column() {
-              ForEach(PUZZLE_CATEGORIES, (cat: PuzzleCategory, catIdx: number) => {
-                Text(cat.name)
-                  .fontSize(15)
-                  .fontWeight(this.dropdownCategoryIdx === catIdx ? FontWeight.Bold : FontWeight.Normal)
-                  .fontColor(this.dropdownCategoryIdx === catIdx ? '#ffffff' : themeText(this.isDark))
-                  .backgroundColor(this.dropdownCategoryIdx === catIdx ? COLOR_ACCENT : itemBg(this.isDark, this.bgImageUri.length > 0))
-                  .width('100%')
-                  .height(44)
-                  .textAlign(TextAlign.Center)
-                  .onClick((): void => { this.selectCategory(catIdx); });
-              });
+            Scroll() {
+              Column() {
+                ForEach(PUZZLE_CATEGORIES, (cat: PuzzleCategory, catIdx: number) => {
+                  Text(cat.name)
+                    .fontSize(15)
+                    .fontWeight(this.dropdownCategoryIdx === catIdx ? FontWeight.Bold : FontWeight.Normal)
+                    .fontColor(this.dropdownCategoryIdx === catIdx ? '#ffffff' : themeText(this.isDark))
+                    .backgroundColor(this.dropdownCategoryIdx === catIdx ? COLOR_ACCENT : itemBg(this.isDark, this.bgImageUri.length > 0))
+                    .width('100%')
+                    .height(44)
+                    .textAlign(TextAlign.Center)
+                    .onClick((): void => { this.selectCategory(catIdx); });
+                });
+              }
+              .width('100%')
             }
             .width(100)
+            .height('100%')
+            .scrollBar(BarState.Off)
             .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
             .border({ width: { right: 1 }, color: themeDivider(this.isDark) });
 
-            Column() {
-              ForEach(PUZZLE_CATEGORIES[this.dropdownCategoryIdx].items,
-                (item: PuzzleItem, itemIdx: number) => {
-                Row() {
-                  Text(item.name)
-                    .fontSize(14)
-                    .fontColor(themeText(this.isDark))
-                    .layoutWeight(1);
-                  if (this.currentPuzzleCategoryIdx() === this.dropdownCategoryIdx &&
-                    this.currentPuzzleItemIdxInCategory() === itemIdx) {
-                    Text('✓')
+            Scroll() {
+              Column() {
+                ForEach(PUZZLE_CATEGORIES[this.dropdownCategoryIdx].items,
+                  (item: PuzzleItem, itemIdx: number) => {
+                  Row() {
+                    Text(item.name)
                       .fontSize(14)
-                      .fontColor(COLOR_ACCENT)
-                      .fontWeight(FontWeight.Bold);
+                      .fontColor(themeText(this.isDark))
+                      .layoutWeight(1);
+                    if (this.currentPuzzleCategoryIdx() === this.dropdownCategoryIdx &&
+                      this.currentPuzzleItemIdxInCategory() === itemIdx) {
+                      Text('✓')
+                        .fontSize(14)
+                        .fontColor(COLOR_ACCENT)
+                        .fontWeight(FontWeight.Bold);
+                    }
                   }
-                }
-                .width('100%')
-                .height(44)
-                .padding({ left: 16, right: 16 })
-                .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
-                .onClick((): void => {
-                  this.selectPuzzleItem(this.dropdownCategoryIdx, itemIdx);
+                  .width('100%')
+                  .height(44)
+                  .padding({ left: 16, right: 16 })
+                  .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0))
+                  .onClick((): void => {
+                    this.selectPuzzleItem(this.dropdownCategoryIdx, itemIdx);
+                  });
                 });
-              });
+              }
+              .width('100%')
             }
             .layoutWeight(1)
+            .height('100%')
+            .scrollBar(BarState.Off)
             .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0));
           }
           .width('100%')
+          .height('72%')
           .backgroundColor(itemBg(this.isDark, this.bgImageUri.length > 0));
 
           Column()
@@ -2757,15 +3082,23 @@ struct Index {
           .fontSize(16)
           .onClick((): void => { this.showExportDialog(); });
 
-        Button(this.showResultChart ? '≡' : '📈')
-          .width(50)
-          .height(38)
-          .backgroundColor(themeBg(this.isDark))
-          .fontColor(themeSubText(this.isDark))
-          .fontSize(16)
-          .onClick((): void => {
-            this.showResultChart = !this.showResultChart;
-          });
+        Button() {
+          if (this.showResultChart) {
+            Text('≡')
+              .fontSize(16)
+              .fontColor(themeSubText(this.isDark));
+          } else {
+            AppIcon({ iconId: 'chart', color: themeSubText(this.isDark), iconSize: 18 });
+          }
+        }
+        .width(50)
+        .height(38)
+        .backgroundColor(themeBg(this.isDark))
+        .fontColor(themeSubText(this.isDark))
+        .fontSize(16)
+        .onClick((): void => {
+          this.showResultChart = !this.showResultChart;
+        });
       }
       .width('100%')
       .height(38);
@@ -2873,6 +3206,8 @@ struct Index {
         }
         .width('100%')
         .layoutWeight(1)
+        .constraintSize({ minHeight: '25%' })
+        .padding({ bottom: 6 })
         .divider({ strokeWidth: 1, color: themeDivider(this.isDark), startMargin: 0, endMargin: 0 });
       }
 
@@ -2886,17 +3221,70 @@ struct Index {
         .fontSize(15)
         .fontColor(themeText(this.isDark))
         .textAlign(TextAlign.Center)
-        .maxLines(2)
         .padding({ left: 10, right: 10, top: 8, bottom: 8 });
       }
     }
     .width('100%')
-    .height('100%')
+    // 用 layoutWeight 而非 height('100%')：后者按父容器总高计算，
+    // 会吃掉父级的安全区 padding，导致底栏被顶出屏幕（审核问题2）
+    .layoutWeight(1)
     .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0));
   }
 
   // ===== 设置页面 =====
   private settingScroller: Scroller = new Scroller();
+
+  /** 第 index 个标签中心在滚动内容里的 x 偏移（vp）；宽度尚未测到时返回 -1 */
+  private tabCenterX(index: number): number {
+    let x: number = this.navPad;
+    for (let i: number = 0; i < this.settingSections.length; i++) {
+      const w: number | undefined = this.tabWidths[i];
+      if (w === undefined || w <= 0) {
+        return -1; // 还没测到，等下次布局回调
+      }
+      if (i === index) {
+        return x + w / 2;
+      }
+      x += w;
+    }
+    return -1;
+  }
+
+  /** 内容总宽：优先用测量值，测不到时按标签宽度累加兜底 */
+  private navTotalWidth(): number {
+    if (this.navContentWidth > 0) {
+      return this.navContentWidth;
+    }
+    let w: number = this.navPad * 2;
+    for (let i: number = 0; i < this.settingSections.length; i++) {
+      const tw: number | undefined = this.tabWidths[i];
+      if (tw !== undefined) {
+        w += tw;
+      }
+    }
+    return w;
+  }
+
+  /** 高亮标签变化时，横向导航自动滚动让高亮项尽量居中；无法居中则贴边保持可见 */
+  onSettingSectionChange(): void {
+    if (this.suppressScrollHighlight) {
+      return;
+    }
+    const navW: number = this.navWidth;
+    const cx: number = this.tabCenterX(this.currentSettingSection);
+    const contentW: number = this.navTotalWidth();
+    if (navW <= 0 || cx < 0 || contentW <= navW) {
+      return;
+    }
+    // 目标偏移 = 标签中心 - 视口一半；再按可滚动范围夹取，
+    // 不足半屏无法居中时就贴边（左端/右端），保证高亮项始终完整可见
+    const ideal: number = cx - navW / 2;
+    const maxScroll: number = contentW - navW;
+    const target: number = Math.min(Math.max(0, ideal), maxScroll);
+    // ScrollOptions 的 xOffset / yOffset 都是必填项：漏掉 yOffset 会让 scrollTo 静默失效，
+    // 且不能用 `as ScrollOptions` 断言绕过——那正是这个 bug 当初能编译通过的原因
+    this.navScroller.scrollTo({ xOffset: target, yOffset: 0, animation: { duration: 250 } });
+  }
 
   getSectionScrollIndex(sectionIdx: number): number {
     let idx: number = 0;
@@ -2907,15 +3295,31 @@ struct Index {
   }
 
   scrollToSettingSection(sectionIdx: number): void {
+    // 重复点击同一标签时 @Watch 不会触发，需手动补一次居中（否则标签被划出视野后点不回来）
+    const sameSection: boolean = this.currentSettingSection === sectionIdx;
+    // 先解锁再赋值：否则上一次跳转的抑制窗口内再次点击时，@Watch(onSettingSectionChange)
+    // 会被 suppressScrollHighlight 挡掉，顶部导航无法把新标签滚进视野
+    this.suppressScrollHighlight = false;
     this.currentSettingSection = sectionIdx;
+    if (sameSection) {
+      this.onSettingSectionChange();
+    }
+    this.suppressScrollHighlight = true; // 点击跳转期间锁定高亮，防止被滚动回调抢改写
     let targetIdx: number = this.getSectionScrollIndex(sectionIdx);
-    this.settingScroller.scrollToIndex(targetIdx, true, ScrollAlign.START);
+    // 延迟到 List 布局稳定后再滚动，避免首次进入时定位偏移到上一区
+    setTimeout((): void => {
+      this.settingScroller.scrollToIndex(targetIdx, true, ScrollAlign.START);
+    }, 60);
+    // 等滚动动画结束后恢复由滚动回调接管高亮
+    setTimeout((): void => {
+      this.suppressScrollHighlight = false;
+    }, 700);
   }
 
   @Builder SettingsTab() {
     Column() {
       // 分区标签（书签定位）
-      Scroll() {
+      Scroll(this.navScroller) {
         Row() {
           ForEach(this.settingSections, (section: SettingSection, index: number) => {
             Text(section.title)
@@ -2926,16 +3330,27 @@ struct Index {
               .padding({ left: 16, right: 16 })
               .height(48)
               .textAlign(TextAlign.Center)
+              .onAreaChange((_oldValue: Area, newValue: Area): void => {
+                // 只记宽度（vp）：中心位置由宽度累加推算，比读 position 更可靠
+                this.tabWidths[index] = Number(newValue.width);
+              })
               .onClick((): void => { this.scrollToSettingSection(index); });
           }, (section: SettingSection): string => section.title)
         }
         .height(48)
-        .padding({ left: 12, right: 12 });
+        .padding({ left: this.navPad, right: this.navPad })
+        .onAreaChange((_oldValue: Area, newValue: Area): void => {
+          // 记录内容总宽，用于计算横向滚动上限
+          this.navContentWidth = Number(newValue.width);
+        });
       }
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
       .width('100%')
-      .height(48);
+      .height(48)
+      .onAreaChange((_oldValue: Area, newValue: Area): void => {
+        this.navWidth = Number(newValue.width);
+      });
 
       // 分割线
       Row().width('100%').height(1).backgroundColor(themeDivider(this.isDark));
@@ -3010,8 +3425,14 @@ struct Index {
       .layoutWeight(1)
       .padding({ bottom: 24 })
       .divider({ strokeWidth: 1, color: themeDivider(this.isDark), startMargin: 15, endMargin: 0 })
-      .onScrollIndex((first: number): void => {
-        // 根据滚动位置更新当前标签
+      .onScrollIndex((first: number, _last: number): void => {
+        // 点击顶部导航跳转期间不改写高亮，等滚动动画结束后再接管
+        if (this.suppressScrollHighlight) {
+          return;
+        }
+        // 必须以视口【顶部】第一个可见项 first 反推高亮：书签定位用的是 ScrollAlign.START
+        // （目标分区标题对齐视口顶部）。若按 last（视口底部）反推，高亮会恒定滞后整个视口高度，
+        // 点击"打乱"会跳到"界面"（实测偏移约 4 个分区）。防回归：此处不可用 last。
         let count: number = 0;
         for (let i: number = 0; i < this.settingSections.length; i++) {
           let sectionSize: number = this.settingSections[i].items.length + 1;
@@ -3024,7 +3445,8 @@ struct Index {
       });
     }
     .width('100%')
-    .height('100%')
+    // 同 ResultTab：用 layoutWeight 保留父级安全区 padding（审核问题2）
+    .layoutWeight(1)
     .backgroundColor(contentBg(this.isDark, this.bgImageUri.length > 0));
   }
 }
@@ -3032,90 +3454,30 @@ struct Index {
 // ===== Tab按钮组件 =====
 @Component
 struct TabButton {
-  @Prop label: string;
+  @Prop iconId: string;
   @Prop selected: boolean;
+  @Prop isDark: boolean;
   onTabClick: () => void = (): void => {};
 
   build() {
-    Column() {
-      Text(this.label)
-        .fontSize(14)
-        .fontWeight(this.selected ? FontWeight.Bold : FontWeight.Normal)
-        .fontColor('#ffffff')
-        .textAlign(TextAlign.Center);
+    Column({ space: 3 }) {
+      AppIcon({
+        iconId: this.iconId,
+        color: this.selected ? COLOR_ACCENT : themeText(this.isDark),
+        iconSize: 24
+      })
+      // 选中指示条
+      Row()
+        .width(this.selected ? 18 : 0)
+        .height(2.5)
+        .borderRadius(1.25)
+        .backgroundColor(COLOR_ACCENT)
     }
     .layoutWeight(1)
     .height(48)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .onClick((): void => { this.onTabClick(); });
-  }
-}
-
-// ===== 备注编辑对话框 =====
-@CustomDialog
-struct NoteEditDialog {
-  controller: CustomDialogController;
-  currentNote: string = '';
-  onSave: (note: string) => void = (): void => {};
-  @State noteText: string = '';
-
-  aboutToAppear(): void {
-    this.noteText = this.currentNote;
-  }
-
-  build() {
-    Column() {
-      Text('编辑备注')
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(themeText(AppConfig.darkMode))
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .padding({ top: 20, bottom: 12 });
-
-      TextInput({ text: this.noteText, placeholder: '输入备注...' })
-        .width('100%')
-        .height(48)
-        .fontSize(15)
-        .fontColor(themeText(AppConfig.darkMode))
-        .placeholderColor(themeSubText(AppConfig.darkMode))
-        .caretColor(themeText(AppConfig.darkMode))
-        .padding({ left: 12, right: 12 })
-        .backgroundColor(themeDivider(AppConfig.darkMode))
-        .borderRadius(8)
-        .onChange((value: string): void => {
-          this.noteText = value;
-        });
-
-      Row() {
-        Button('取消')
-          .fontSize(15)
-          .fontColor(themeSubText(AppConfig.darkMode))
-          .backgroundColor(themeBg(AppConfig.darkMode))
-          .layoutWeight(1)
-          .height(42)
-          .onClick((): void => { this.controller.close(); });
-
-        Button('保存')
-          .fontSize(15)
-          .fontColor('#ffffff')
-          .backgroundColor(COLOR_PRIMARY)
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(8)
-          .onClick((): void => {
-            this.onSave(this.noteText);
-            this.controller.close();
-          });
-      }
-      .width('100%')
-      .margin({ top: 16 });
-    }
-    .width('90%')
-    .backgroundColor(themeBg(AppConfig.darkMode))
-    .borderRadius(16)
-    .padding(16);
   }
 }
 
@@ -3127,7 +3489,6 @@ struct PrivacyDialog {
   mode: number = 0;
   onAgree: () => void = (): void => {};
   onExit: () => void = (): void => {};
-  onViewWeb: () => void = (): void => {};
   @State agreed: boolean = false;
 
   build() {
@@ -3169,16 +3530,6 @@ struct PrivacyDialog {
       .width('100%')
       .layoutWeight(1)
       .scrollBar(BarState.Off);
-
-      // 网页版超链接
-      Text('查看网页版隐私政策 ›')
-        .fontSize(14)
-        .fontColor(COLOR_ACCENT)
-        .decoration({ type: TextDecorationType.Underline, color: COLOR_ACCENT })
-        .textAlign(TextAlign.Center)
-        .width('100%')
-        .margin({ top: 10, bottom: 4 })
-        .onClick((): void => { this.onViewWeb(); });
 
       if (this.mode === 0) {
         // 首次同意模式

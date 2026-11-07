@@ -124,7 +124,7 @@ export class Cross {
     for (let a = 0; a < 11880; a++) {
       Cross.epd[a] = -1;
     }
-    Cross.epd[69 * 24] = 0;
+    Cross.epd[1670] = 0;
     Utils.createPrun(Cross.epd, 6, Cross.epm, 3);
     for (let a = 0; a < 7920; a++) {
       Cross.eod[a] = -1;
@@ -196,7 +196,7 @@ export class Cross {
 
   private static idacross(ep: number, eo: number, d: number, lm: number): boolean {
     if (d == 0) {
-      return ep == 1656 && eo == 1104;
+      return ep == 1670 && eo == 1104;
     }
     if (Cross.epd[ep] > d || Cross.eod[eo] > d) {
       return false;
@@ -220,7 +220,7 @@ export class Cross {
 
   private static idacrossPath(ep: number, eo: number, d: number, lm: number, face: number, path: number[]): void {
     if (d == 0) {
-      if (ep == 1656 && eo == 1104) {
+      if (ep == 1670 && eo == 1104) {
         let sb = Cross.rotateStr[0][face];
         let qtm = 0;
         for (let i = path.length - 1; i > 0; i--) {
@@ -255,7 +255,7 @@ export class Cross {
 
   private static idaeofc(ep: number, eo: number, eof: number, d: number, lm: number): boolean {
     if (d == 0) {
-      return ep == 1656 && eo == 1104 && (eof & 15) == 0;
+      return ep == 1670 && eo == 1104 && (eof & 15) == 0;
     }
     if (Cross.epd[ep] > d || Cross.eod[eo] > d || Cross.eofd[eof] > d) {
       return false;
@@ -282,7 +282,7 @@ export class Cross {
   private static idaxcross(ep: number, eo: number, co: number, feo: number, slot: number, d: number,
     lm: number): boolean {
     if (d == 0) {
-      return ep == 1656 && eo == 1104 && co == (slot + 4) * 3 && feo == slot * 2;
+      return ep == 1670 && eo == 1104 && co == (slot + 4) * 3 && feo == slot * 2;
     }
     if (Cross.epd[ep] > d || Cross.eod[eo] > d || Cross.fecd[slot][feo * 24 + co] > d) {
       return false;
@@ -311,7 +311,7 @@ export class Cross {
   private static idaxcrossPath(ep: number, eo: number, co: number, feo: number, slot: number, d: number,
     lm: number, face: number, path: number[]): void {
     if (d == 0) {
-      if (ep == 1656 && eo == 1104 && co == (slot + 4) * 3 && feo == slot * 2) {
+      if (ep == 1670 && eo == 1104 && co == (slot + 4) * 3 && feo == slot * 2) {
         let sb = Cross.rotateStr[0][face];
         let qtm = 0;
         for (let i = path.length - 1; i > 0; i--) {
@@ -350,7 +350,7 @@ export class Cross {
 
   private static cross(scramble: string, side: number, face: number): string {
     const s = scramble.split(' ');
-    let ep = 1656;
+    let ep = 1670;
     let eo = 1104;
     for (let i = 0; i < s.length; i++) {
       if (s[i].length != 0) {
@@ -404,7 +404,7 @@ export class Cross {
     const s = scramble.split(' ');
     let sb = '';
     for (let face = 0; face < 6; face++) {
-      let ep = 1656;
+      let ep = 1670;
       let eo = 1104;
       for (let i = 0; i < s.length; i++) {
         if (s[i].length != 0) {
@@ -447,7 +447,7 @@ export class Cross {
       co[i] = (i + 4) * 3;
       feo[i] = i * 2;
     }
-    let ep = 1656;
+    let ep = 1670;
     let eo = 1104;
     for (let d = 0; d < s.length; d++) {
       if (s[d].length != 0) {
@@ -521,7 +521,7 @@ export class Cross {
         co[i] = (i + 4) * 3;
         feo[i] = i * 2;
       }
-      let ep = 1656;
+      let ep = 1670;
       let eo = 1104;
       for (let d = 0; d < s.length; d++) {
         if (s[d].length != 0) {
@@ -583,7 +583,7 @@ export class Cross {
 
   static eofc(scramble: string, side: number): string {
     const s = scramble.split(' ');
-    let ep = 1656;
+    let ep = 1670;
     let eo = 1104;
     let eof = 0;
     for (let i = 0; i < s.length; i++) {

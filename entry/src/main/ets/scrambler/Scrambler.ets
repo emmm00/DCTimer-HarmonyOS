@@ -1,7 +1,6 @@
 // Ported from scrambler/Scrambler.java (DCTimer-BLE -> HarmonyOS ArkTS)
 import { Tools } from '../cs/min2phase/Tools';
 import { Search as Search3 } from '../cs/min2phase/Search';
-import { Search as Search4 } from '../cs/threephase/Search';
 import { Search as SearchSq } from '../cs/sq12phase/Search';
 import { Cube } from './Cube';
 import { Clock } from './Clock';
@@ -246,11 +245,32 @@ export class Scrambler {
   ];
 
   // color scheme (from SharedPreferences in Java; set by UI)
+  // 面序：NxN 为 U R F D L B（U黄 R蓝 F红 D白 L绿 B橙，与 min2phase 面序一致）。
+  // 这些静态数组是打乱图的取色真值表：配色编辑器（view/ColorSchemeEditor）
+  // 直接改写元素，Index 负责持久化到 Preferences（key 同名，逗号分隔 ARGB）。
   static schemeN: number[] = [ColorConst.YELLOW, ColorConst.BLUE, ColorConst.RED, ColorConst.WHITE, 0xff009900, 0xffff9900];
   static schemeP: number[] = [ColorConst.RED, 0xff009900, ColorConst.BLUE, ColorConst.YELLOW];
   static schemeQ: number[] = [ColorConst.WHITE, ColorConst.BLUE, 0xffff9900, ColorConst.YELLOW, 0xff009900, ColorConst.RED];
   static schemeW: number[] = [ColorConst.YELLOW, ColorConst.BLUE, ColorConst.RED, ColorConst.WHITE, 0xff009900, 0xffff9900];
+  // 五魔方 12 色（原 drawMega 内 megaColorScheme==0 硬编码方案的提取，现为可编辑表）
+  static schemeM: number[] = [ColorConst.WHITE, 0xff880088, 0xff008800, 0xff88ddff, 0xff882222, ColorConst.BLUE,
+    ColorConst.RED, 0xffff9900, ColorConst.GREEN, 0xffff44ff, 0xff000088, ColorConst.YELLOW];
   static schemeFto: number[] = [ColorConst.WHITE, 0xff880088, 0xff00dd00, ColorConst.RED, ColorConst.BLUE, 0xffbbbbbb, ColorConst.YELLOW, 0xffff9900];
+
+  // 各 scheme 出厂默认（配色编辑器"恢复默认"用；返回新数组，勿共享引用）
+  static defaultSchemeN(): number[] {
+    return [ColorConst.YELLOW, ColorConst.BLUE, ColorConst.RED, ColorConst.WHITE, 0xff009900, 0xffff9900];
+  }
+  static defaultSchemeP(): number[] {
+    return [ColorConst.RED, 0xff009900, ColorConst.BLUE, ColorConst.YELLOW];
+  }
+  static defaultSchemeW(): number[] {
+    return [ColorConst.YELLOW, ColorConst.BLUE, ColorConst.RED, ColorConst.WHITE, 0xff009900, 0xffff9900];
+  }
+  static defaultSchemeM(): number[] {
+    return [ColorConst.WHITE, 0xff880088, 0xff008800, 0xff88ddff, 0xff882222, ColorConst.BLUE,
+      ColorConst.RED, 0xffff9900, ColorConst.GREEN, 0xffff44ff, 0xff000088, ColorConst.YELLOW];
+  }
 
   private category = 0;
   private scramble = '';
@@ -261,7 +281,6 @@ export class Scrambler {
   imageType = 0;
   scrambleLen = 0;
   private cube3: Search3 = new Search3();
-  private cube4: Search4 = new Search4();
   private cubesq: SearchSq = new SearchSq();
   private megaminx: Megaminx = new Megaminx();
   private clock: Clock = new Clock();
@@ -269,6 +288,7 @@ export class Scrambler {
   getScramble(): string {
     return this.scramble;
   }
+
 
   getScrambleWithHint(landscape: boolean): string {
     if (this.scramble == null) {
@@ -494,9 +514,10 @@ export class Scrambler {
         this.scrambleList.push(scr);
         this.hint = this.solve333(scr);
         break;
-      case -31: // 四速
-        scr = this.cube4.randomState(false);
-        this.imageType = scr.startsWith('Error') ? 0 : 4;
+      case -31: // 四速（随机步生成，与五阶同思路：瞬时完成；
+        // random-state 三阶段求解在 ArkTS 上需数十秒，弃用）
+        scr = this.scramble444();
+        this.imageType = 4;
         this.scrambleList.push(scr);
         break;
       case -30: // 五速
@@ -583,8 +604,8 @@ export class Scrambler {
         this.imageType = 7;
         this.scrambleList.push(scr);
         break;
-      case -17: // 四盲
-        scr = this.cube4.randomState(true);
+      case -17: // 四盲（随机步生成，见 case -31 注释）
+        scr = this.scramble444();
         this.imageType = 4;
         this.scrambleList.push(scr);
         break;
@@ -993,8 +1014,8 @@ export class Scrambler {
         this.imageType = 4;
         this.scrambleList.push(scr);
         break;
-      case 69: // TODO
-        scr = this.cube4.randomCenter();
+      case 69: // TODO（暂用随机步，原 randomCenter 三阶段太慢）
+        scr = this.scramble444();
         this.imageType = 4;
         this.scrambleList.push(scr);
         break;
@@ -2252,14 +2273,8 @@ export class Scrambler {
   }
 
   private drawMega(width: number, p: PaintState, c: ScrambleCanvas): void {
-    let colors: number[];
-    if (AppGlobals.megaColorScheme == 0) {
-      colors = [ColorConst.WHITE, 0xff880088, 0xff008800, 0xff88ddff, 0xff882222, ColorConst.BLUE,
-        ColorConst.RED, 0xffff9900, ColorConst.GREEN, 0xffff44ff, 0xff000088, ColorConst.YELLOW];
-    } else {
-      colors = [ColorConst.WHITE, ColorConst.RED, 0xff008800, 0xff880088, 0xffffdd00, ColorConst.BLUE,
-        0xffffff99, 0xff88ddff, 0xffff9900, ColorConst.GREEN, 0xffff44ff, ColorConst.GRAY];
-    }
+    // 12 色可编辑配色（原两套硬编码方案改为 schemeM 单表 + 配色编辑器）
+    const colors: number[] = Scrambler.schemeM;
     const edgeFrac = (1 + Math.sqrt(5)) / 4;
     const centerFrac = 0.5;
     const scale = width / 350;

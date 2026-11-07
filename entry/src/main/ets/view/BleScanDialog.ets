@@ -9,6 +9,8 @@ import {
   CubeDeviceInfo, CubeConnectionState, CubeType, CubeMove
 } from '../util/SmartCubeProtocol';
 import { AppConfig } from '../model/AppConfig';
+import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 const CUBE_TYPE_NAMES: string[] = ['未知', 'Giiker', 'GAN', '魔域32', '奇艺'];
 
@@ -21,6 +23,7 @@ export struct BleScanDialog {
   @State statusText: string = '点击扫描搜索智能魔方';
   @State connectedName: string = '';
   onConnected: (address: string, name: string) => void = (): void => {};
+  onCubeMove: (move: CubeMove) => void = (): void => {};
 
   private bleCallbacks: BleCallbacks = {
     onDeviceFound: (devices: CubeDeviceInfo[]): void => {
@@ -51,7 +54,8 @@ export struct BleScanDialog {
       }
     },
     onCubeMove: (move: CubeMove): void => {
-      // 在连接期间记录转动
+      // 连接期间实时转发转动事件给上层，用于驱动 3D 魔方同步
+      this.onCubeMove(move);
     },
     onBatteryChange: (level: number): void => {
       // battery update
@@ -78,7 +82,28 @@ export struct BleScanDialog {
 
   startScan(): void {
     this.devices = [];
-    bleManager.startScan(this.bleCallbacks);
+    this.requestPermissionBeforeScan();
+  }
+
+  /** BLE 扫描需定位权限，先动态申请再启动扫描，避免首次扫描失败 */
+  async requestPermissionBeforeScan(): Promise<void> {
+    try {
+      const atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
+      const context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+      const result = await atManager.requestPermissionsFromUser(context,
+        ['ohos.permission.APPROXIMATELY_LOCATION']);
+      const granted: boolean = result.authResults.every(
+        (r: number): boolean => r === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED);
+      if (granted) {
+        bleManager.startScan(this.bleCallbacks);
+      } else {
+        this.statusText = '需要位置权限才能扫描魔方';
+        this.isScanning = false;
+      }
+    } catch (err) {
+      // 权限请求被取消或异常，尝试直接扫描
+      bleManager.startScan(this.bleCallbacks);
+    }
   }
 
   connectToDevice(device: CubeDeviceInfo): void {
@@ -176,9 +201,11 @@ export struct BleScanDialog {
           ForEach(this.devices, (device: CubeDeviceInfo) => {
             ListItem() {
               Row() {
-                // 设备图标指示
-                Text(this.getTypeIcon(device.type))
-                  .fontSize(20)
+                // 设备类型色点指示
+                Circle({ width: 14, height: 14 })
+                  .fill(this.getTypeColor(device.type))
+                  .stroke('#cccccc')
+                  .strokeWidth(1)
                   .margin({ right: 10 });
 
                 Column() {
@@ -222,13 +249,13 @@ export struct BleScanDialog {
     .borderRadius(12);
   }
 
-  getTypeIcon(type: CubeType): string {
+  getTypeColor(type: CubeType): string {
     switch (type) {
-      case CubeType.GAN: return '🟢';
-      case CubeType.GIIKER: return '🔵';
-      case CubeType.MOYU32: return '🟠';
-      case CubeType.QIYI: return '🟣';
-      default: return '⬜';
+      case CubeType.GAN: return '#4caf50';
+      case CubeType.GIIKER: return '#2196f3';
+      case CubeType.MOYU32: return '#ff9800';
+      case CubeType.QIYI: return '#9c27b0';
+      default: return '#ffffff';
     }
   }
 }

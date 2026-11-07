@@ -41,6 +41,7 @@ export class Result {
   private notes: string[] = [];
   private movesArr: string[] = [];
   private solveMetaArr: string[] = [];
+  private puzzleArr: number[] = [];
   stats: Stats;
 
   constructor(db: ResultDB) {
@@ -68,6 +69,7 @@ export class Result {
     this.notes = [];
     this.movesArr = [];
     this.solveMetaArr = [];
+    this.puzzleArr = [];
     this.length = 0;
     if (cursor === null || cursor.rowCount === 0) {
       this.initArrays(24);
@@ -85,6 +87,10 @@ export class Result {
       this.initArrays(Math.floor(length * 3 / 2));
     }
     let i: number = 0;
+    let puzzleCol: number = -1;
+    if (cursor.getColumnIndex('puzzle') > -1) {
+      puzzleCol = cursor.getColumnIndex('puzzle');
+    }
     if (cursor.goToFirstRow()) {
       do {
         this.resultArr[i] = cursor.getLong(1 + this.offset);
@@ -104,6 +110,7 @@ export class Result {
         this.notes[i] = cursor.getString(6 + this.offset);
         this.movesArr[i] = cursor.getString(13 + this.offset);
         this.solveMetaArr[i] = cursor.getString(14 + this.offset);
+        this.puzzleArr.push(puzzleCol > -1 ? cursor.getLong(puzzleCol) : 0);
         i++;
       } while (cursor.goToNextRow());
     }
@@ -307,8 +314,15 @@ export class Result {
     return this.ids[i];
   }
 
+  getPuzzle(i: number): number {
+    if (i < 0 || i >= this.length) {
+      return 0;
+    }
+    return this.puzzleArr[i];
+  }
+
   async insert(time: number, penalty: number, scramble: string, mp: boolean,
-    moves: string | null, solveMeta: string | null): Promise<void> {
+    moves: string | null, solveMeta: string | null, puzzle: number): Promise<void> {
     this.addResult(time, penalty, mp);
     let d: number = 1;
     if (penalty === 2) {
@@ -321,7 +335,8 @@ export class Result {
       'resp': penalty,
       'resd': d,
       'scr': scramble,
-      'time': dateStr
+      'time': dateStr,
+      'puzzle': puzzle
     };
     if (moves !== null && moves.length > 0) {
       cv['moves'] = moves;
@@ -341,6 +356,7 @@ export class Result {
     this.notes.push('');
     this.movesArr.push(moves !== null ? moves : '');
     this.solveMetaArr.push(solveMeta !== null ? solveMeta : '');
+    this.puzzleArr.push(puzzle);
     this.mod = true;
   }
 
@@ -368,6 +384,7 @@ export class Result {
       this.notes.push('');
       this.movesArr.push('');
       this.solveMetaArr.push('');
+      this.puzzleArr.push(0);
       this.length++;
     }
     this.mod = true;
@@ -676,6 +693,7 @@ export class ResultEntry {
   scramble: string = '';
   date: number = 0;
   note: string = '';
+  puzzle: number = 0; // 成绩所属项目（flatPuzzleCode 索引/DB 项目码），0=未知
   phases: number[] = []; // 分段成绩（毫秒），非分段计时时为空
 
   getTime(): number {
