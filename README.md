@@ -25,7 +25,10 @@
 
 40 秒产品演示片，无旁白无字幕 —— 一次完整计时串起打乱、停表、成绩、趋势与 CFOP 求解。
 
-[docs/promo/film](docs/promo/film/) · 提供 1440p 主交付与 1080p 分享版。
+- [1440p 主交付](docs/promo/film/DCTimer-宣传片-1440p.mp4)（2560×1440 · 13.8 Mbps · 67 MB）
+- [1080p 分享版](docs/promo/film/DCTimer-宣传片-1080p-分享版.mp4)（1920×1080 · 8.0 Mbps · 39 MB）
+
+制作方式与分镜见 [docs/promo/film](docs/promo/film/)。
 
 ## 截图
 
