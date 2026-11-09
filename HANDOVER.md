@@ -1,6 +1,6 @@
 # DCTimer 魔方计时器 — 项目交接报告
 
-> 本文档面向接管本项目的 AI 助手，目标是让你快速建立全局认知、精准索引功能代码位置、并避开已踩过的坑。
+> 本文档面向二次开发者，目标是快速建立全局认知、精准索引功能代码位置、并避开已经踩过的坑。
 > 阅读顺序建议：第 1~3 章 → 第 7 章注意事项 → 按任务查阅第 5 章功能索引。
 >
 > **v2 更新（2026-08-22）：** 本版把交接范围从"计时 / 打乱 / 成绩"扩展为完整覆盖 **CFOP + 桥式多解求解引擎**。新增/改动的重点：多种 F2L 插入顺序可选、右桥剪枝表持久化、智能魔方 3D 跟随视图，以及本会话修复的"CFOP 求解闪退"与两类 UI 适配问题。求解引擎架构见 5.7，两个重大 bug 的根因与防回归要点见 7.3，近期改动见第 6 章。
@@ -14,8 +14,8 @@
 | 应用名 | DCTimer（魔方计时与训练工具） |
 | 参考原型 | Android 版 DCTimer-BLE + cstimer.net，界面重绘、逻辑忠实移植 |
 | 平台 | HarmonyOS（ArkTS / ArkUI 声明式开发） |
-| 项目路径 | `D:\_PORJOCT\AI\trae\dc` |
-| 开发工具 | DevEco Studio 6.1.1（SDK 位于 `D:\Program Files\Huawei\DevEco Studio\sdk`） |
+| 项目路径 | 仓库根目录 |
+| 开发工具 | DevEco Studio 6.1.1 及以上 |
 | SDK 版本 | targetSdkVersion `6.1.1(24)`，compatibleSdkVersion `5.0.0(12)`（即 minAPI=12，刻意下调以覆盖全量设备，勿改回 24） |
 | 模块结构 | 单模块 `entry`，单页面 `pages/Index`（约 3400 行，所有 UI 集中于此） |
 | 第三方依赖 | 无（仅官方 kit；oh-package 依赖为空） |
@@ -29,14 +29,14 @@
 
 ```powershell
 # 必须在项目根目录执行（脚本内部依赖 CWD）
-powershell -ExecutionPolicy Bypass -File "D:\_PORJOCT\AI\trae\dc\build.ps1"
+# 见 README「构建」一节
 ```
 
-- `build.ps1` 做的事：设置 NODE_HOME/DEVECO_SDK_HOME/JAVA_HOME 环境变量 → 调 hvigorw.js 执行 `assembleHap` → 输出日志到 `C:\Users\52622\AppData\Local\Temp\opencode\build_out.log`。
-- **路径硬编码**：DevEco 安装在 `D:\Program Files\Huawei\DevEco Studio`，换机器需改脚本前三行。
-- **签名**：`build-profile.json5` 的 signingConfig 指向 `D:/dct.p12`、`D:/Download/dctimerRelease.p7b`、`D:/Download/dctimer.cer`（本机文件）。证书缺失时只能出 unsigned 包。
+- 需要先设置 NODE_HOME / DEVECO_SDK_HOME / JAVA_HOME 三个环境变量，再调 hvigorw。
+- **路径**：按你本机 DevEco Studio 的实际安装位置填。
+- **签名**：仓库里的 `signingConfigs` 是空数组，需自行配置。证书缺失时只能出 unsigned 包。
 - 构建产物：`entry/build/default/outputs/default/entry-default-signed.hap`。
-- **每次改动后必须跑一次 build.ps1 验证**（ArkTS 严格子集规则极多，肉眼检查不可靠）。
+- **每次改动后必须跑一次构建验证**（ArkTS 严格子集规则极多，肉眼检查不可靠）。
 
 ---
 
@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File "D:\_PORJOCT\AI\trae\dc\build.ps1"
 
 ```
 dc/
-├── build.ps1                        # 构建脚本（见第 2 章）
+
 ├── build-profile.json5              # 签名 + SDK 版本（compatibleSdkVersion=5.0.0(12) 勿动）
 ├── docs/privacy_policy.md           # 隐私政策原文
 └── entry/src/main/
@@ -355,7 +355,7 @@ d42783f  基线：完整可用版本
 
 ### 7.5 工程习惯
 
-- 改动后必须 `build.ps1` 验证；失败时看 `C:\Users\52622\AppData\Local\Temp\opencode\build_out.log`。
+- 改动后必须重新构建验证；失败时看 hvigor 日志里的 `Error Message` 与 `At File:`。
 - Index.ets 超 64KB，读文件必须用 offset/limit 分段或先 grep 行号再读。
 - 遵循既有代码风格：中文注释、方法级 `/** */`、回调参数显式类型、`(param): void => {}` 箭头函数签名带返回类型。
 
@@ -393,7 +393,7 @@ d42783f  基线：完整可用版本
 4. **min2phase 语义核对（遗留）**：v1 遗留项，部分移动方向的 min2phase 语义与物理旋转需在真机最终确认。
 5. **solver/ 目录部分求解器**（Petrus、Roux 之外的边缘魔方求解）算法已移植，但部分未接入 UI 入口。
 6. **AppGlobals.ets** 存在大量移植遗留的未用静态字段，可继续瘦身（上次清理已删 54MB 资源与死代码，此文件是残留）。
-7. **未提交改动分批 commit**：见第 6 章，验证后按背景/主题、求解引擎、本会话修复三批提交。
+7. 改动分批 commit：见第 6 章，验证后按背景/主题、求解引擎、本会话修复三批提交。
 
 ---
 

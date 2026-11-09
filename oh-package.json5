@@ -1,6 +1,8 @@
 {
   "modelVersion": "6.1.1",
-  "description": "Please describe the basic information.",
+  "description": "DCTimer for HarmonyOS - 魔方计时与训练工具",
+  "license": "GPL-3.0",
+  "author": "",
   "dependencies": {
   },
   "devDependencies": {
