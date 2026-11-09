@@ -12,9 +12,14 @@
 /.appanalyzer
 # 求解器基准测试脚手架（TS 版，仅本地跑数据，不参与打包）
 /.solverbench
-# 图标原图备份与本地修补脚本，属于工作区产物不进仓库（.workbuddy/memory 仍保留跟踪）
-/.workbuddy/icon_backup
-/.workbuddy/icon_fix.py
+# 本地开发笔记与图标原图备份，不公开
+/.workbuddy
 # 本地构建脚本（路径随机器不同）
 /build_cmd.bat
 /build.ps1
+# 本地签名配置备份（含密钥，绝不入库）
+/build-profile.local.json5.bak
+/dct.p12
+*.p12
+*.p7b
+*.cer
