@@ -22,3 +22,8 @@
 *.p12
 *.p7b
 *.cer
+# 宣传片成片体积大（1440p ~175MB / 1080p ~75MB），只做本地交付、不随仓库分发
+*.mp4
+# 宣传片渲染中间产物（重新生成时产生，不入库）
+/docs/promo/film/out/
+/docs/promo/film/stills/
